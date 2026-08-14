@@ -1,8 +1,11 @@
 import Employee from '../models/Employee.js';
 import Tenant from '../models/Tenant.js';
 import Onboarding from '../models/Onboarding.js';
+import Department from '../models/Department.js';
 import { sendEmail } from '../utils/email.js';
 import { employeeCreated } from '../utils/emailTemplates.js';
+
+const escapeRegex = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 // Ensures an employee marked 'Onboarding' has a matching Onboarding record,
 // so they actually show up in the Onboarding menu.
@@ -132,6 +135,94 @@ export const createEmployee = async (req, res) => {
     }
 
     res.status(201).json({ success: true, message: 'Employee created.', data: result });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+};
+
+// POST /api/employees/bulk  – HR only. CSV-driven bulk import.
+// Body: { employees: [{ name, email, role, department|departmentId, salary, status?, joinDate?, birthDate }] }
+// Rows are processed independently — one bad row doesn't fail the batch.
+// `department` (a name) is resolved case-insensitively, creating the
+// department if it doesn't exist yet, matching the inline-create pattern
+// already used on the single-employee Register form.
+export const bulkCreateEmployees = async (req, res) => {
+  try {
+    const tid = req.tenantId;
+    const rows = Array.isArray(req.body.employees) ? req.body.employees : [];
+    if (rows.length === 0)
+      return res.status(400).json({ success: false, message: 'No employee rows provided.' });
+    if (rows.length > 500)
+      return res.status(400).json({ success: false, message: 'Bulk import is limited to 500 rows per upload.' });
+
+    const tenant = await Tenant.findById(tid).select('name').lean();
+    const deptCache = new Map(); // lowercased name -> departmentId, to avoid re-querying per row
+    const created = [];
+    const failed = [];
+
+    for (let i = 0; i < rows.length; i++) {
+      const row = rows[i] || {};
+      try {
+        const email = (row.email || '').toLowerCase().trim();
+        if (!email || !row.name?.trim() || !row.role?.trim() || row.salary === undefined || row.salary === '' || !row.birthDate) {
+          throw new Error('Missing required field(s): name, email, role, salary, birthDate.');
+        }
+        if (isNaN(Number(row.salary))) throw new Error('Salary must be a number.');
+
+        const exists = await Employee.findOne({ email, tenantId: tid });
+        if (exists) throw new Error('An employee with this email already exists.');
+
+        // Resolve department: explicit id wins, otherwise resolve/create by name
+        let departmentId = row.departmentId || null;
+        if (!departmentId && row.department?.trim()) {
+          const deptName = row.department.trim();
+          const cacheKey = deptName.toLowerCase();
+          if (deptCache.has(cacheKey)) {
+            departmentId = deptCache.get(cacheKey);
+          } else {
+            let dept = await Department.findOne({ tenantId: tid, name: new RegExp(`^${escapeRegex(deptName)}$`, 'i') });
+            if (!dept) dept = await Department.create({ tenantId: tid, name: deptName });
+            departmentId = dept._id;
+            deptCache.set(cacheKey, departmentId);
+          }
+        }
+        if (!departmentId) throw new Error('Department (name or departmentId) is required.');
+
+        const rawPassword = row.password || 'Welcome123!';
+        const emp = await Employee.create({
+          name: row.name.trim(),
+          email,
+          role: row.role.trim(),
+          departmentId,
+          salary: Number(row.salary),
+          status: ['Active', 'Onboarding', 'Offboarded'].includes(row.status) ? row.status : 'Active',
+          joinDate: row.joinDate ? new Date(row.joinDate) : new Date(),
+          birthDate: new Date(row.birthDate),
+          tenantId: tid,
+          password: rawPassword,
+        });
+
+        if (emp.status === 'Onboarding') await ensureOnboardingRecord(emp._id, tid);
+
+        if (emp.email) {
+          const tpl = employeeCreated({
+            employeeName: emp.name, email: emp.email,
+            defaultPassword: rawPassword, orgName: tenant?.name || 'Your Organisation',
+          });
+          sendEmail({ to: emp.email, ...tpl }).catch(err => console.error('Email failed:', err.message));
+        }
+
+        created.push({ row: i, name: emp.name, email: emp.email, _id: emp._id });
+      } catch (err) {
+        failed.push({ row: i, email: row.email || '', name: row.name || '', message: err.message });
+      }
+    }
+
+    res.status(created.length > 0 ? 201 : 400).json({
+      success: created.length > 0,
+      message: `${created.length} employee(s) created, ${failed.length} failed.`,
+      data: { created, failed },
+    });
   } catch (err) {
     res.status(500).json({ success: false, message: err.message });
   }

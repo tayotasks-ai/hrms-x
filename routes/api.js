@@ -6,9 +6,9 @@ import { getTenants, createTenant } from '../controllers/tenantController.js';
 import { getDepartments, createDepartment, updateDepartment, deleteDepartment } from '../controllers/departmentController.js';
 import { loginUser } from '../controllers/authController.js';
 import { getDashboardStats } from '../controllers/dashboardController.js';
-import { getEmployees, getEmployee, createEmployee, updateEmployee, getMe, updateEmployeeManager, getDirectoryLite } from '../controllers/employeeController.js';
+import { getEmployees, getEmployee, createEmployee, bulkCreateEmployees, updateEmployee, getMe, updateEmployeeManager, getDirectoryLite } from '../controllers/employeeController.js';
 import { getLeaves, createLeave, updateLeaveStatus } from '../controllers/leaveController.js';
-import { getPayslips, createPayslip } from '../controllers/payslipController.js';
+import { getPayslips, createPayslip, getPayslipPdf } from '../controllers/payslipController.js';
 import { getKpis, createKpi, updateKpi, submitSelfReview, submitManagerReview, getKpiSummary } from '../controllers/kpiController.js';
 import { getPerformanceCycles, createPerformanceCycle, updatePerformanceCycle } from '../controllers/performanceCycleController.js';
 import { getCompliances, createCompliance, seedDefaults, updateCompliance } from '../controllers/complianceController.js';
@@ -27,6 +27,7 @@ import { getPositions, createPosition, updatePosition } from '../controllers/pos
 import { getInternalJobs, createInternalJob, applyForJob, referCandidate } from '../controllers/recruitmentController.js';
 import { getTrainingCourses, createTrainingCourse, enrollEmployee, updateEnrollmentStatus } from '../controllers/trainingController.js';
 import { getShoutouts, createShoutout, reactToShoutout } from '../controllers/shoutoutController.js';
+import { clockIn, clockOut, getMyAttendance, getTodayAttendance } from '../controllers/attendanceController.js';
 
 const router = express.Router();
 
@@ -47,12 +48,19 @@ router.get('/shoutouts', getShoutouts);
 router.post('/shoutouts', createShoutout);
 router.put('/shoutouts/:id/react', reactToShoutout);
 
+// Attendance / Clock-in
+router.get('/attendance/me', getMyAttendance);
+router.post('/attendance/clock-in', clockIn);
+router.post('/attendance/clock-out', clockOut);
+router.get('/attendance/today', hrOnly, getTodayAttendance);
+
 // Employees
 router.get('/employees/me', getMe);
 router.get('/employees/directory-lite', getDirectoryLite);
 router.get('/employees', getEmployees);
 router.get('/employees/:id', hrOnly, getEmployee);
 router.post('/employees', hrOnly, createEmployee);
+router.post('/employees/bulk', hrOnly, bulkCreateEmployees);
 router.put('/employees/:id', updateEmployee);          // self-edit or HR — enforced in controller
 router.put('/employees/:id/manager', hrOnly, updateEmployeeManager);
 
@@ -70,6 +78,7 @@ router.put('/leaves/:id', hrOnly, updateLeaveStatus);
 // Payroll
 router.get('/payslips', getPayslips);
 router.post('/payslips', hrOnly, createPayslip);
+router.get('/payslips/:id/pdf', getPayslipPdf);
 
 // KPIs / Performance
 router.get('/kpis/summary', getKpiSummary);
