@@ -58,8 +58,12 @@ const employeeSchema = new mongoose.Schema({
   },
   bankDetails: {
     bankName: String,
+    bankCode: String,          // Paystack bank code, needed to resolve/pay
     accountNumber: String,
-    accountName: String
+    accountName: String,       // name Paystack resolved for this account
+    verified: { type: Boolean, default: false },
+    verifiedAt: Date,
+    paystackRecipientCode: String, // cached Paystack transfer recipient, created on verify
   },
   
   // Regulatory IDs

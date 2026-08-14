@@ -13,6 +13,15 @@ const tenantSchema = new mongoose.Schema({
     trim: true,
     lowercase: true
   },
+  // Per-tenant Paystack credentials for payroll disbursement. Each tenant
+  // company connects its OWN Paystack business account — this platform never
+  // holds or moves tenant funds itself, it only calls Paystack's Transfers
+  // API using the tenant's own secret key.
+  paystack: {
+    secretKeyEncrypted: { type: String, select: false },
+    connected: { type: Boolean, default: false },
+    connectedAt: { type: Date },
+  },
   createdAt: {
     type: Date,
     default: Date.now

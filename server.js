@@ -13,7 +13,13 @@ const PORT = process.env.PORT || 5001;
 
 // Middlewares
 app.use(cors());
-app.use(express.json());
+// `verify` captures the raw request body bytes onto req.rawBody. Paystack
+// signs webhook payloads over the exact bytes it sent; re-serializing the
+// parsed JSON (JSON.stringify(req.body)) can produce different bytes (key
+// order, spacing) and silently break signature verification. Only the
+// webhook route uses req.rawBody — everything else uses the parsed req.body
+// as before.
+app.use(express.json({ verify: (req, res, buf) => { req.rawBody = buf; } }));
 
 // Enforce Multi-Tenant isolation middleware on all routes
 app.use(tenantMiddleware);

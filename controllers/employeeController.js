@@ -258,6 +258,26 @@ export const updateEmployee = async (req, res) => {
       delete updates.password;
     }
 
+    // Bank verification state is server-controlled — only the
+    // verify-bank-account endpoint (which actually calls Paystack) is
+    // allowed to set these. If the bank fields change here, drop any
+    // client-supplied verification claims so a stale/forged "verified: true"
+    // can never slip in, and reset verification since the account changed.
+    if (updates.bankDetails) {
+      const prev = emp.bankDetails || {};
+      const accountChanged = updates.bankDetails.accountNumber !== prev.accountNumber
+        || updates.bankDetails.bankCode !== prev.bankCode;
+      updates.bankDetails = {
+        bankName: updates.bankDetails.bankName ?? prev.bankName,
+        bankCode: updates.bankDetails.bankCode ?? prev.bankCode,
+        accountNumber: updates.bankDetails.accountNumber ?? prev.accountNumber,
+        accountName: accountChanged ? undefined : prev.accountName,
+        verified: accountChanged ? false : prev.verified,
+        verifiedAt: accountChanged ? undefined : prev.verifiedAt,
+        paystackRecipientCode: accountChanged ? undefined : prev.paystackRecipientCode,
+      };
+    }
+
     // Snapshot the audited fields before applying updates so we can diff after save.
     const before = {};
     for (const f of AUDITED_FIELDS) before[f] = emp[f];

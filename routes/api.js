@@ -29,6 +29,10 @@ import { getTrainingCourses, createTrainingCourse, enrollEmployee, updateEnrollm
 import { getShoutouts, createShoutout, reactToShoutout } from '../controllers/shoutoutController.js';
 import { clockIn, clockOut, getMyAttendance, getTodayAttendance } from '../controllers/attendanceController.js';
 import { getAuditLog } from '../controllers/auditLogController.js';
+import { getPaymentSettings, connectPaystack, disconnectPaystack } from '../controllers/paymentSettingsController.js';
+import { getBanks, verifyBankAccount } from '../controllers/bankController.js';
+import { payPayslip, payBatch, finalizePayslipPayment } from '../controllers/payslipPaymentController.js';
+import { handlePaystackWebhook } from '../controllers/webhookController.js';
 
 const router = express.Router();
 
@@ -39,6 +43,7 @@ router.post('/tenants', createTenant);
 router.post('/auth/login', loginUser);
 router.post('/auth/forgot-password', forgotPassword);
 router.post('/auth/reset-password', resetPassword);
+router.post('/webhooks/paystack', handlePaystackWebhook);
 
 // ── All authenticated routes require protect middleware ────────────────────────
 router.use(protect);
@@ -63,6 +68,11 @@ router.get('/attendance/today', hrOnly, getTodayAttendance);
 // Audit Log
 router.get('/audit-log', hrOnly, getAuditLog);
 
+// Payment Settings (Paystack connection)
+router.get('/payment-settings', hrOnly, getPaymentSettings);
+router.post('/payment-settings/paystack/connect', hrOnly, connectPaystack);
+router.delete('/payment-settings/paystack', hrOnly, disconnectPaystack);
+
 // Employees
 router.get('/employees/me', getMe);
 router.get('/employees/directory-lite', getDirectoryLite);
@@ -72,6 +82,10 @@ router.post('/employees', hrOnly, createEmployee);
 router.post('/employees/bulk', hrOnly, bulkCreateEmployees);
 router.put('/employees/:id', updateEmployee);          // self-edit or HR — enforced in controller
 router.put('/employees/:id/manager', hrOnly, updateEmployeeManager);
+router.post('/employees/:id/verify-bank-account', verifyBankAccount); // self-edit or HR — enforced in controller
+
+// Banks (Paystack bank list, for the account-selection dropdown)
+router.get('/banks', getBanks);
 
 // Departments
 router.get('/departments', getDepartments);
@@ -88,6 +102,9 @@ router.put('/leaves/:id', hrOnly, updateLeaveStatus);
 router.get('/payslips', getPayslips);
 router.post('/payslips', hrOnly, createPayslip);
 router.get('/payslips/:id/pdf', getPayslipPdf);
+router.post('/payslips/pay-batch', hrOnly, payBatch);
+router.post('/payslips/:id/pay', hrOnly, payPayslip);
+router.post('/payslips/:id/pay/finalize', hrOnly, finalizePayslipPayment);
 
 // KPIs / Performance
 router.get('/kpis/summary', getKpiSummary);
