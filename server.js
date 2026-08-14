@@ -1,12 +1,20 @@
 import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
+import path from 'path';
+import { fileURLToPath } from 'url';
 import connectDB from './config/db.js';
 import tenantMiddleware from './middleware/tenant.js';
 import apiRoutes from './routes/api.js';
 
-// Load environment variables
-dotenv.config();
+// Load environment variables by absolute path (not process.cwd()) so this
+// works no matter which directory `node server.js` / `nodemon` is launched
+// from. Note this line still runs AFTER the imports above have already been
+// evaluated (ES module imports are hoisted ahead of any same-file code) —
+// any module that reads env vars at its own top level, like utils/email.js,
+// must load its own .env the same way rather than depending on this line.
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+dotenv.config({ path: path.resolve(__dirname, '.env') });
 
 const app = express();
 const PORT = process.env.PORT || 5001;

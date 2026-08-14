@@ -1,7 +1,21 @@
 import { Resend } from 'resend';
 import dotenv from 'dotenv';
+import path from 'path';
+import { fileURLToPath } from 'url';
 
-dotenv.config();
+// Resolve .env by an absolute path instead of relying on process.cwd().
+// Why: this file constructs the Resend client at module-load time (below),
+// and ES module imports are hoisted — meaning this whole module (and its
+// `new Resend(...)` call) executes BEFORE server.js's own `dotenv.config()`
+// line ever runs, regardless of where that line appears in server.js. If
+// this file's own dotenv.config() call resolved .env relative to cwd, it
+// would silently find nothing (and RESEND_API_KEY would stay undefined)
+// whenever the process is launched from a directory other than backend/ —
+// exactly what caused "Missing API key" crashes even with a valid .env
+// sitting right next to server.js. An absolute path removes the cwd
+// dependency entirely.
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+dotenv.config({ path: path.resolve(__dirname, '../.env') });
 
 const resend = new Resend(process.env.RESEND_API_KEY);
 const defaultFromEmail = process.env.FROM_EMAIL || 'hrms-x@kumutech.com.ng';
