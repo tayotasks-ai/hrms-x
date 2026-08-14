@@ -5,7 +5,7 @@ import { authLimiter } from '../middleware/rateLimiter.js';
 // Controllers
 import { getTenants, createTenant } from '../controllers/tenantController.js';
 import { getDepartments, createDepartment, updateDepartment, deleteDepartment } from '../controllers/departmentController.js';
-import { loginUser, changePassword, forgotPassword, resetPassword, verifyLoginOtp, setTwoFactor } from '../controllers/authController.js';
+import { loginUser, changePassword, forgotPassword, resetPassword, verifyLoginOtp, setTwoFactor, setPrivacyConsent } from '../controllers/authController.js';
 import { getDashboardStats } from '../controllers/dashboardController.js';
 import { getEmployees, getEmployee, createEmployee, bulkCreateEmployees, updateEmployee, getMe, updateEmployeeManager, getDirectoryLite } from '../controllers/employeeController.js';
 import { getLeaves, createLeave, updateLeaveStatus, getLeavePolicy, updateLeavePolicy } from '../controllers/leaveController.js';
@@ -30,11 +30,14 @@ import { getTrainingCourses, createTrainingCourse, enrollEmployee, updateEnrollm
 import { getShoutouts, createShoutout, reactToShoutout } from '../controllers/shoutoutController.js';
 import { clockIn, clockOut, getMyAttendance, getTodayAttendance } from '../controllers/attendanceController.js';
 import { getAuditLog } from '../controllers/auditLogController.js';
-import { getPaymentSettings, connectPaystack, disconnectPaystack } from '../controllers/paymentSettingsController.js';
+import { getPaymentSettings, connectPaystack, disconnectPaystack, setDualApproval } from '../controllers/paymentSettingsController.js';
 import { getBanks, verifyBankAccount } from '../controllers/bankController.js';
 import { payPayslip, payBatch, finalizePayslipPayment } from '../controllers/payslipPaymentController.js';
+import { getPayrollApprovals, approvePayrollApproval, rejectPayrollApproval } from '../controllers/payrollApprovalController.js';
 import { handlePaystackWebhook } from '../controllers/webhookController.js';
 import { getNotifications, markNotificationRead, markAllNotificationsRead } from '../controllers/notificationController.js';
+import { exportMyData, createDsarRequest, getDsarRequests, updateDsarRequest } from '../controllers/dsarController.js';
+import { getRetentionSettings, updateRetentionSettings, getRetentionCandidates, anonymizeEmployee } from '../controllers/retentionController.js';
 
 const router = express.Router();
 
@@ -57,6 +60,7 @@ router.get('/dashboard/stats', getDashboardStats);
 // Auth (authenticated)
 router.put('/auth/change-password', changePassword);
 router.put('/auth/2fa', setTwoFactor);
+router.put('/auth/consent', setPrivacyConsent);
 
 // Shoutouts
 router.get('/shoutouts', getShoutouts);
@@ -81,6 +85,7 @@ router.put('/notifications/read-all', markAllNotificationsRead);
 router.get('/payment-settings', hrOnly, getPaymentSettings);
 router.post('/payment-settings/paystack/connect', hrOnly, connectPaystack);
 router.delete('/payment-settings/paystack', hrOnly, disconnectPaystack);
+router.put('/payment-settings/dual-approval', hrOnly, setDualApproval);
 
 // Employees
 router.get('/employees/me', getMe);
@@ -117,6 +122,23 @@ router.get('/payslips/:id/pdf', getPayslipPdf);
 router.post('/payslips/pay-batch', hrOnly, payBatch);
 router.post('/payslips/:id/pay', hrOnly, payPayslip);
 router.post('/payslips/:id/pay/finalize', hrOnly, finalizePayslipPayment);
+
+// Payroll Approvals (maker-checker, only relevant when dual approval is on)
+router.get('/payroll-approvals', hrOnly, getPayrollApprovals);
+router.post('/payroll-approvals/:id/approve', hrOnly, approvePayrollApproval);
+router.post('/payroll-approvals/:id/reject', hrOnly, rejectPayrollApproval);
+
+// Data Subject Requests (NDPA access/correction/erasure)
+router.get('/employees/me/data-export', exportMyData);   // self only — enforced in controller
+router.post('/dsar-requests', createDsarRequest);          // self only — enforced in controller
+router.get('/dsar-requests', hrOnly, getDsarRequests);
+router.put('/dsar-requests/:id', hrOnly, updateDsarRequest);
+
+// Data Retention
+router.get('/retention-settings', hrOnly, getRetentionSettings);
+router.put('/retention-settings', hrOnly, updateRetentionSettings);
+router.get('/retention/candidates', hrOnly, getRetentionCandidates);
+router.post('/employees/:id/anonymize', hrOnly, anonymizeEmployee);
 
 // KPIs / Performance
 router.get('/kpis/summary', getKpiSummary);

@@ -1,11 +1,15 @@
 import crypto from 'crypto';
 import Payslip from '../models/Payslip.js';
 import Employee from '../models/Employee.js';
+import Tenant from '../models/Tenant.js';
+import PayrollApproval from '../models/PayrollApproval.js';
 import { getDecryptedPaystackKey } from './paymentSettingsController.js';
 import { initiateTransfer, finalizeTransfer, PaystackError } from '../utils/paystack.js';
 import { recordAudit } from '../utils/auditLog.js';
 import { sendEmail } from '../utils/email.js';
 import { payslipAvailable } from '../utils/emailTemplates.js';
+import { notifyHrAdmins } from '../utils/notify.js';
+import User from '../models/User.js';
 
 // References are generated as hrms_<tenantId>_<payslipId>_<random> so the
 // PUBLIC webhook (which has no X-Tenant-ID header) can recover which
@@ -26,7 +30,7 @@ const mapTransferStatus = (paystackStatus) => {
 // and batch-pay endpoints. Mutates and saves the payslip; returns a plain
 // result object rather than throwing, so batch callers can collect
 // per-item outcomes the same way bulkCreateEmployees does for imports.
-const payOnePayslip = async (payslip, secretKey, tenantId, actor) => {
+export const payOnePayslip = async (payslip, secretKey, tenantId, actor) => {
   if (['Processing', 'Pending_OTP', 'Paid'].includes(payslip.payment?.status)) {
     return { ok: false, payslipId: payslip._id, message: `Payment already ${payslip.payment.status}.` };
   }
@@ -77,6 +81,50 @@ const payOnePayslip = async (payslip, secretKey, tenantId, actor) => {
   }
 };
 
+// Shared by payPayslip/payBatch when the tenant has maker-checker turned on
+// (Tenant.paystack.requireDualApproval). Instead of calling Paystack now,
+// files a PayrollApproval request that a *different* HR_Admin must approve
+// from the Payroll Approvals queue — see payrollApprovalController.js,
+// which is the only place that ever actually calls payOnePayslip for these.
+const createApprovalRequest = async (tid, ids, actor) => {
+  const payslips = await Payslip.find({ _id: { $in: ids }, tenantId: tid });
+  const found = new Map(payslips.map(p => [p._id.toString(), p]));
+  const validIds = [];
+  const skipped = [];
+
+  for (const id of ids) {
+    const p = found.get(String(id));
+    if (!p) { skipped.push({ payslipId: id, message: 'Payslip not found.' }); continue; }
+    if (['Processing', 'Pending_OTP', 'Paid'].includes(p.payment?.status)) {
+      skipped.push({ payslipId: id, message: `Payment already ${p.payment.status}.` });
+      continue;
+    }
+    validIds.push(p._id);
+  }
+
+  if (validIds.length === 0) return { approval: null, skipped };
+
+  const totalAmount = validIds.reduce((sum, id) => sum + (found.get(String(id))?.netPay || 0), 0);
+  const periods = [...new Set(validIds.map(id => found.get(String(id))?.period).filter(Boolean))];
+
+  const approval = await PayrollApproval.create({
+    tenantId: tid,
+    payslipIds: validIds,
+    period: periods.length === 1 ? periods[0] : periods.length > 1 ? 'Multiple periods' : undefined,
+    totalAmount,
+    requestedBy: actor,
+  });
+
+  notifyHrAdmins(User, tid, {
+    type: 'payroll_approval_requested',
+    title: 'Payroll run needs approval',
+    message: `${actor.name} submitted a ₦${totalAmount.toLocaleString()} payroll run (${validIds.length} payslip${validIds.length === 1 ? '' : 's'}) for approval.`,
+    link: 'payroll',
+  });
+
+  return { approval, skipped };
+};
+
 // POST /api/payslips/:id/pay – HR only
 export const payPayslip = async (req, res) => {
   try {
@@ -84,8 +132,17 @@ export const payPayslip = async (req, res) => {
     const payslip = await Payslip.findOne({ _id: req.params.id, tenantId: tid });
     if (!payslip) return res.status(404).json({ success: false, message: 'Payslip not found.' });
 
+    const actor = { id: req.user._id, name: req.user.name, model: 'User' };
+    const tenant = await Tenant.findById(tid).select('paystack.requireDualApproval');
+
+    if (tenant?.paystack?.requireDualApproval) {
+      const { approval, skipped } = await createApprovalRequest(tid, [req.params.id], actor);
+      if (!approval) return res.status(400).json({ success: false, message: skipped[0]?.message || 'Nothing to submit for approval.' });
+      return res.json({ success: true, message: 'Submitted for approval. A different HR admin must approve it before payment.', data: { requiresApproval: true, approvalId: approval._id } });
+    }
+
     const secretKey = await getDecryptedPaystackKey(tid);
-    const result = await payOnePayslip(payslip, secretKey, tid, { id: req.user._id, name: req.user.name, model: 'User' });
+    const result = await payOnePayslip(payslip, secretKey, tid, actor);
 
     if (!result.ok) return res.status(400).json({ success: false, message: result.message });
     res.json({ success: true, message: result.requiresOtp ? 'Transfer requires an OTP to finalize.' : 'Payment initiated.', data: result });
@@ -106,8 +163,20 @@ export const payBatch = async (req, res) => {
     if (ids.length === 0) return res.status(400).json({ success: false, message: 'No payslipIds provided.' });
     if (ids.length > 100) return res.status(400).json({ success: false, message: 'Batch payment is limited to 100 payslips at a time.' });
 
-    const secretKey = await getDecryptedPaystackKey(tid);
     const actor = { id: req.user._id, name: req.user.name, model: 'User' };
+    const tenant = await Tenant.findById(tid).select('paystack.requireDualApproval');
+
+    if (tenant?.paystack?.requireDualApproval) {
+      const { approval, skipped } = await createApprovalRequest(tid, ids, actor);
+      if (!approval) return res.status(400).json({ success: false, message: 'Nothing to submit for approval.', data: skipped });
+      return res.json({
+        success: true,
+        message: `Submitted ${approval.payslipIds.length} of ${ids.length} payslip(s) for approval. A different HR admin must approve before payment.`,
+        data: { requiresApproval: true, approvalId: approval._id, skipped },
+      });
+    }
+
+    const secretKey = await getDecryptedPaystackKey(tid);
 
     const results = [];
     for (const id of ids) {

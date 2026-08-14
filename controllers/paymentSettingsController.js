@@ -17,16 +17,43 @@ export const getDecryptedPaystackKey = async (tenantId) => {
 // connection status, so the frontend can show "Connected" / "Not connected".
 export const getPaymentSettings = async (req, res) => {
   try {
-    const tenant = await Tenant.findById(req.tenantId).select('paystack.connected paystack.connectedAt');
+    const tenant = await Tenant.findById(req.tenantId).select('paystack.connected paystack.connectedAt paystack.requireDualApproval');
     res.json({
       success: true,
       data: {
         paystack: {
           connected: !!tenant?.paystack?.connected,
           connectedAt: tenant?.paystack?.connectedAt || null,
+          requireDualApproval: !!tenant?.paystack?.requireDualApproval,
         },
       },
     });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+};
+
+// PUT /api/payment-settings/dual-approval  – HR only. Body: { enabled }.
+// Toggles maker-checker for payroll disbursement (see Tenant.js).
+export const setDualApproval = async (req, res) => {
+  try {
+    const enabled = !!req.body.enabled;
+    const tenant = await Tenant.findByIdAndUpdate(
+      req.tenantId,
+      { 'paystack.requireDualApproval': enabled },
+      { new: true }
+    ).select('paystack.requireDualApproval');
+
+    recordAudit({
+      tenantId: req.tenantId,
+      actor: { id: req.user._id, name: req.user.name, model: req.userRole === 'Employee' ? 'Employee' : 'User' },
+      targetType: 'PaymentSettings',
+      targetId: req.tenantId,
+      targetName: 'Payroll dual approval',
+      changes: [{ field: 'requireDualApproval', from: String(!enabled), to: String(enabled) }],
+    });
+
+    res.json({ success: true, message: `Dual approval ${enabled ? 'enabled' : 'disabled'}.`, data: { requireDualApproval: tenant.paystack.requireDualApproval } });
   } catch (err) {
     res.status(500).json({ success: false, message: err.message });
   }
@@ -58,9 +85,12 @@ export const connectPaystack = async (req, res) => {
     }
 
     const encrypted = encryptSecret(trimmed);
+    // Dot-notation update — a wholesale `{ paystack: {...} }` replace would
+    // clobber sibling fields like requireDualApproval every time the key is
+    // (re)connected.
     const tenant = await Tenant.findByIdAndUpdate(
       req.tenantId,
-      { paystack: { secretKeyEncrypted: encrypted, connected: true, connectedAt: new Date() } },
+      { 'paystack.secretKeyEncrypted': encrypted, 'paystack.connected': true, 'paystack.connectedAt': new Date() },
       { new: true }
     ).select('paystack.connected paystack.connectedAt');
 
@@ -83,7 +113,8 @@ export const connectPaystack = async (req, res) => {
 export const disconnectPaystack = async (req, res) => {
   try {
     await Tenant.findByIdAndUpdate(req.tenantId, {
-      paystack: { secretKeyEncrypted: undefined, connected: false, connectedAt: undefined },
+      $unset: { 'paystack.secretKeyEncrypted': '', 'paystack.connectedAt': '' },
+      $set: { 'paystack.connected': false },
     });
 
     recordAudit({

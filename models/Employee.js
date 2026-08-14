@@ -11,6 +11,16 @@ const employeeSchema = new mongoose.Schema({
   status: { type: String, enum: ['Active', 'Onboarding', 'Offboarded'], default: 'Active' },
   joinDate: { type: Date, required: true, default: Date.now },
   birthDate: { type: Date, required: true },
+  // Set automatically when status transitions to 'Offboarded' (see
+  // employeeController.updateEmployee) — drives the data retention window
+  // in retentionController.js. Cleared if the employee is ever re-activated.
+  offboardedAt: { type: Date },
+  // Set once HR anonymizes this record under the retention policy. The
+  // Employee doc's PII gets scrubbed at that point, but Payslip/Leave/Kpi
+  // records referencing this _id are deliberately left alone — those carry
+  // their own statutory retention requirements independent of the person's
+  // erasure/anonymization.
+  anonymizedAt: { type: Date },
   
   // Bio Data
   gender: { type: String, enum: ['Male', 'Female', 'Other', 'Prefer not to say'] },
@@ -59,21 +69,30 @@ const employeeSchema = new mongoose.Schema({
   bankDetails: {
     bankName: String,
     bankCode: String,          // Paystack bank code, needed to resolve/pay
-    accountNumber: String,
+    // Encrypted at rest (utils/crypto.js encryptPii/decryptPii). Payment
+    // itself never needs to read this back — Paystack transfers use
+    // paystackRecipientCode — so this is kept only for display/audit and is
+    // select: false to avoid accidental exposure.
+    accountNumber: { type: String, select: false },
     accountName: String,       // name Paystack resolved for this account
     verified: { type: Boolean, default: false },
     verifiedAt: Date,
     paystackRecipientCode: String, // cached Paystack transfer recipient, created on verify
   },
   
-  // Regulatory IDs
+  // Regulatory IDs — encrypted at rest (utils/crypto.js encryptPii/decryptPii)
+  // since BVN/NIN in particular are financial-identity-theft-grade data.
+  // select: false so a plain Employee.find() never accidentally leaks
+  // ciphertext (or worse, pre-migration plaintext) into an API response —
+  // callers must explicitly .select('+regulatory.bvn') etc. and decrypt.
+  // lgaOfOrigin is not sensitive in the same way and stays plain.
   regulatory: {
-    bvn: String,
-    nin: String,
-    nhf: String,
-    rsa: String,
-    pfa: String,
-    tin: String,
+    bvn: { type: String, select: false },
+    nin: { type: String, select: false },
+    nhf: { type: String, select: false },
+    rsa: { type: String, select: false },
+    pfa: { type: String, select: false },
+    tin: { type: String, select: false },
     lgaOfOrigin: String
   },
 
@@ -92,6 +111,17 @@ const employeeSchema = new mongoose.Schema({
   twoFactorEnabled: { type: Boolean, default: false },
   twoFactorOtpHash: { type: String, select: false },
   twoFactorOtpExpires: { type: Date, select: false },
+
+  // NDPA privacy notice acceptance. Employees don't self-register (HR
+  // creates their account), so the natural consent checkpoint is first
+  // login rather than signup — see PrivacyConsentModal.vue, shown whenever
+  // accepted is false. `version` lets a future re-issued notice force
+  // re-acceptance by simply bumping the version string in the frontend.
+  privacyConsent: {
+    accepted: { type: Boolean, default: false },
+    acceptedAt: Date,
+    version: String,
+  },
 
   createdAt: { type: Date, default: Date.now }
 });

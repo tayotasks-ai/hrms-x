@@ -6,6 +6,7 @@ import { payslipAvailable } from '../utils/emailTemplates.js';
 import { calculateNigerianPayroll } from '../utils/payrollCalc.js';
 import { streamPayslipPdf } from '../utils/payslipPdf.js';
 import { notify } from '../utils/notify.js';
+import { decryptRegulatoryField } from '../utils/piiDisplay.js';
 
 // GET /api/payslips  – employees only see their own
 export const getPayslips = async (req, res) => {
@@ -95,8 +96,11 @@ export const getRemittanceReport = async (req, res) => {
     if (!['paye', 'pension', 'nhf'].includes(type))
       return res.status(400).json({ success: false, message: 'type must be one of: paye, pension, nhf.' });
 
+    // regulatory.* is select: false and encrypted at rest — force-include it
+    // here and decrypt for real (not masked) since a remittance filing needs
+    // the actual TIN/RSA/PFA/NHF number, not a last-4 display value.
     const payslips = (await Payslip.find({ tenantId: tid, period })
-      .populate({ path: 'employeeId', select: 'name regulatory basicSalary allowances' }))
+      .populate({ path: 'employeeId', select: 'name regulatory basicSalary allowances +regulatory.tin +regulatory.rsa +regulatory.pfa +regulatory.nhf' }))
       .sort((a, b) => (a.employeeId?.name || '').localeCompare(b.employeeId?.name || ''));
 
     if (payslips.length === 0)
@@ -110,21 +114,21 @@ export const getRemittanceReport = async (req, res) => {
       for (const p of payslips) {
         const amount = p.deductions?.paye || 0;
         total += amount;
-        rows.push([p.employeeId?.name || 'Deleted Employee', p.employeeId?.regulatory?.tin || '', p.grossPay, amount].map(esc).join(','));
+        rows.push([p.employeeId?.name || 'Deleted Employee', decryptRegulatoryField(p.employeeId?.regulatory?.tin), p.grossPay, amount].map(esc).join(','));
       }
     } else if (type === 'pension') {
       rows.push(['Employee Name', 'RSA/PIN', 'PFA', 'Pensionable Pay', 'Employee Pension (8%)'].map(esc).join(','));
       for (const p of payslips) {
         const amount = p.deductions?.pension || 0;
         total += amount;
-        rows.push([p.employeeId?.name || 'Deleted Employee', p.employeeId?.regulatory?.rsa || '', p.employeeId?.regulatory?.pfa || '', p.grossPay, amount].map(esc).join(','));
+        rows.push([p.employeeId?.name || 'Deleted Employee', decryptRegulatoryField(p.employeeId?.regulatory?.rsa), decryptRegulatoryField(p.employeeId?.regulatory?.pfa), p.grossPay, amount].map(esc).join(','));
       }
     } else {
       rows.push(['Employee Name', 'NHF Number', 'Basic Salary', 'NHF Amount (2.5%)'].map(esc).join(','));
       for (const p of payslips) {
         const amount = p.deductions?.nhf || 0;
         total += amount;
-        rows.push([p.employeeId?.name || 'Deleted Employee', p.employeeId?.regulatory?.nhf || '', p.basicSalary, amount].map(esc).join(','));
+        rows.push([p.employeeId?.name || 'Deleted Employee', decryptRegulatoryField(p.employeeId?.regulatory?.nhf), p.basicSalary, amount].map(esc).join(','));
       }
     }
 

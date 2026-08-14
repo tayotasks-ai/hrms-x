@@ -5,6 +5,8 @@ import Department from '../models/Department.js';
 import { sendEmail } from '../utils/email.js';
 import { employeeCreated } from '../utils/emailTemplates.js';
 import { recordAudit } from '../utils/auditLog.js';
+import { encryptPii } from '../utils/crypto.js';
+import { PII_SELECT, maskEmployeePii, encryptRegulatoryFields } from '../utils/piiDisplay.js';
 
 // Fields sensitive enough to warrant an audit trail entry when HR changes them.
 const AUDITED_FIELDS = ['salary', 'status', 'role', 'departmentId', 'managerId'];
@@ -48,7 +50,7 @@ export const getEmployees = async (req, res) => {
     }
 
     const employees = await Employee.find(query)
-      .select('-password')
+      .select(`-password ${PII_SELECT}`)
       .populate('departmentId', 'name description')
       .populate('managerId', 'name role departmentId')
       .populate('positionId', 'title department')
@@ -57,11 +59,11 @@ export const getEmployees = async (req, res) => {
     if (req.userRole === 'Employee') {
       const sanitizedEmployees = employees.map(emp => {
         const isSelf = emp._id.toString() === req.user._id.toString();
-        const isDirectReport = emp.managerId && 
+        const isDirectReport = emp.managerId &&
           (emp.managerId._id ? emp.managerId._id.toString() : emp.managerId.toString()) === req.user._id.toString();
-        
+
         if (isSelf || isDirectReport) {
-          return emp;
+          return maskEmployeePii(emp.toObject());
         }
 
         // Return only public directory info
@@ -79,7 +81,7 @@ export const getEmployees = async (req, res) => {
       return res.json({ success: true, data: sanitizedEmployees });
     }
 
-    res.json({ success: true, data: employees });
+    res.json({ success: true, data: employees.map(e => maskEmployeePii(e.toObject())) });
   } catch (err) {
     res.status(500).json({ success: false, message: err.message });
   }
@@ -92,13 +94,13 @@ export const getEmployee = async (req, res) => {
     const targetId = req.userRole === 'Employee' ? req.user._id : req.params.id;
 
     const emp = await Employee.findOne({ _id: targetId, tenantId: tid })
-      .select('-password')
+      .select(`-password ${PII_SELECT}`)
       .populate('departmentId', 'name description')
       .populate('managerId', 'name role departmentId')
       .populate('positionId', 'title department');
 
     if (!emp) return res.status(404).json({ success: false, message: 'Employee not found.' });
-    res.json({ success: true, data: emp });
+    res.json({ success: true, data: maskEmployeePii(emp.toObject()) });
   } catch (err) {
     res.status(500).json({ success: false, message: err.message });
   }
@@ -118,13 +120,18 @@ export const createEmployee = async (req, res) => {
     const rawPassword = req.body.password || 'Welcome123!';
 
     const empData = { ...req.body, tenantId: tid, password: rawPassword };
+    if (empData.regulatory) empData.regulatory = { ...empData.regulatory, ...encryptRegulatoryFields(empData.regulatory) };
+    if (empData.bankDetails?.accountNumber) {
+      empData.bankDetails = { ...empData.bankDetails, accountNumber: encryptPii(String(empData.bankDetails.accountNumber).trim()) };
+    }
+
     const emp = await Employee.create(empData);
 
     if (emp.status === 'Onboarding') {
       await ensureOnboardingRecord(emp._id, tid);
     }
 
-    const result = emp.toObject();
+    const result = maskEmployeePii(emp.toObject());
     delete result.password;
 
     // Fire-and-forget welcome email with credentials
@@ -241,7 +248,10 @@ export const updateEmployee = async (req, res) => {
     const isEmployee = req.userRole === 'Employee';
     const targetId = isEmployee ? req.user._id : req.params.id;
 
-    const emp = await Employee.findOne({ _id: targetId, tenantId: tid });
+    // Loads the encrypted regulatory/bank fields too (select: false by
+    // default) so the merges below can preserve whichever ones this
+    // request doesn't explicitly touch, without ever decrypting them.
+    const emp = await Employee.findOne({ _id: targetId, tenantId: tid }).select(PII_SELECT);
     if (!emp) return res.status(404).json({ success: false, message: 'Employee not found.' });
 
     // Strip regulatory fields for employee self-edit
@@ -258,24 +268,53 @@ export const updateEmployee = async (req, res) => {
       delete updates.password;
     }
 
+    // Regulatory IDs are encrypted at rest. The client only ever sends a
+    // field when the user actually typed a new value (see
+    // EmployeeProfile.vue — inputs start blank, not pre-filled with the
+    // masked value) so a present non-empty string always means "encrypt and
+    // replace." Anything omitted/blank keeps whatever was already stored,
+    // rather than being wiped by this being a full nested-object
+    // replacement under the hood.
+    if (updates.regulatory) {
+      const prevReg = emp.regulatory || {};
+      updates.regulatory = {
+        lgaOfOrigin: updates.regulatory.lgaOfOrigin ?? prevReg.lgaOfOrigin,
+        bvn: prevReg.bvn, nin: prevReg.nin, tin: prevReg.tin,
+        nhf: prevReg.nhf, rsa: prevReg.rsa, pfa: prevReg.pfa,
+        ...encryptRegulatoryFields(updates.regulatory),
+      };
+    }
+
     // Bank verification state is server-controlled — only the
     // verify-bank-account endpoint (which actually calls Paystack) is
     // allowed to set these. If the bank fields change here, drop any
     // client-supplied verification claims so a stale/forged "verified: true"
     // can never slip in, and reset verification since the account changed.
+    // accountNumber is encrypted at rest — a non-empty incoming value is
+    // always treated as a real change (this path is never Paystack-verified
+    // anyway), otherwise the existing encrypted value is preserved as-is.
     if (updates.bankDetails) {
       const prev = emp.bankDetails || {};
-      const accountChanged = updates.bankDetails.accountNumber !== prev.accountNumber
-        || updates.bankDetails.bankCode !== prev.bankCode;
+      const rawAccountNumber = updates.bankDetails.accountNumber;
+      const hasNewAccountNumber = typeof rawAccountNumber === 'string' && rawAccountNumber.trim() !== '';
+      const accountChanged = hasNewAccountNumber || (updates.bankDetails.bankCode && updates.bankDetails.bankCode !== prev.bankCode);
       updates.bankDetails = {
         bankName: updates.bankDetails.bankName ?? prev.bankName,
         bankCode: updates.bankDetails.bankCode ?? prev.bankCode,
-        accountNumber: updates.bankDetails.accountNumber ?? prev.accountNumber,
+        accountNumber: hasNewAccountNumber ? encryptPii(rawAccountNumber.trim()) : prev.accountNumber,
         accountName: accountChanged ? undefined : prev.accountName,
         verified: accountChanged ? false : prev.verified,
         verifiedAt: accountChanged ? undefined : prev.verifiedAt,
         paystackRecipientCode: accountChanged ? undefined : prev.paystackRecipientCode,
       };
+    }
+
+    // Track the offboarding date automatically — it drives the retention
+    // window in retentionController.js. Cleared on re-activation so a
+    // re-hired employee doesn't inherit a stale offboarding date.
+    if (updates.status && updates.status !== emp.status) {
+      if (updates.status === 'Offboarded') updates.offboardedAt = new Date();
+      else if (emp.status === 'Offboarded') updates.offboardedAt = null;
     }
 
     // Snapshot the audited fields before applying updates so we can diff after save.
@@ -326,11 +365,12 @@ export const updateEmployee = async (req, res) => {
     }
 
     const populatedEmp = await Employee.findById(emp._id)
+      .select(PII_SELECT)
       .populate('departmentId', 'name description')
       .populate('managerId', 'name role departmentId')
       .populate('positionId', 'title department');
 
-    const result = populatedEmp.toObject();
+    const result = maskEmployeePii(populatedEmp.toObject());
     delete result.password;
     res.json({ success: true, message: 'Employee updated.', data: result });
   } catch (err) {
@@ -342,12 +382,12 @@ export const updateEmployee = async (req, res) => {
 export const getMe = async (req, res) => {
   try {
     const emp = await Employee.findById(req.user._id)
-      .select('-password')
+      .select(`-password ${PII_SELECT}`)
       .populate('departmentId', 'name description')
       .populate('managerId', 'name role departmentId')
       .populate('positionId', 'title department');
     if (!emp) return res.status(404).json({ success: false, message: 'Profile not found.' });
-    res.json({ success: true, data: emp });
+    res.json({ success: true, data: maskEmployeePii(emp.toObject()) });
   } catch (err) {
     res.status(500).json({ success: false, message: err.message });
   }

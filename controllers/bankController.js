@@ -2,6 +2,8 @@ import Employee from '../models/Employee.js';
 import { getDecryptedPaystackKey } from './paymentSettingsController.js';
 import { listBanks, resolveAccountNumber, createTransferRecipient, PaystackError } from '../utils/paystack.js';
 import { recordAudit } from '../utils/auditLog.js';
+import { encryptPii } from '../utils/crypto.js';
+import { maskEmployeePii } from '../utils/piiDisplay.js';
 
 // GET /api/banks – any authenticated user (employees need this to fill in
 // their own bank details). Requires the tenant to have connected Paystack.
@@ -48,7 +50,7 @@ export const verifyBankAccount = async (req, res) => {
     emp.bankDetails = {
       bankName: bankName || emp.bankDetails?.bankName,
       bankCode,
-      accountNumber: resolved.accountNumber,
+      accountNumber: encryptPii(resolved.accountNumber),
       accountName: resolved.accountName,
       verified: true,
       verifiedAt: new Date(),
@@ -65,7 +67,7 @@ export const verifyBankAccount = async (req, res) => {
       changes: [{ field: 'Bank Account', from: 'Unverified', to: `Verified — ${resolved.accountName}` }],
     });
 
-    res.json({ success: true, message: 'Bank account verified.', data: emp.bankDetails });
+    res.json({ success: true, message: 'Bank account verified.', data: maskEmployeePii({ bankDetails: emp.toObject().bankDetails }).bankDetails });
   } catch (err) {
     if (err instanceof PaystackError)
       return res.status(400).json({ success: false, message: `Could not verify account: ${err.message}` });

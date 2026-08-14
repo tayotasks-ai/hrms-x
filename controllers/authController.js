@@ -123,6 +123,7 @@ export const loginUser = async (req, res) => {
             department: emp.department,
             isDefaultPassword: emp.isDefaultPassword,
             twoFactorEnabled: emp.twoFactorEnabled,
+            privacyConsent: emp.privacyConsent,
             tenant: emp.tenantId,
             token: generateToken(emp._id),
           },
@@ -177,6 +178,7 @@ export const verifyLoginOtp = async (req, res) => {
       data: {
         _id: emp._id, name: emp.name, email: emp.email, role: 'Employee',
         department: emp.department, isDefaultPassword: emp.isDefaultPassword, twoFactorEnabled: emp.twoFactorEnabled,
+        privacyConsent: emp.privacyConsent,
         tenant: emp.tenantId, token: generateToken(emp._id),
       },
     });
@@ -197,6 +199,30 @@ export const setTwoFactor = async (req, res) => {
     account.twoFactorEnabled = !!enabled;
     await account.save();
     res.json({ success: true, message: `Email OTP 2FA ${enabled ? 'enabled' : 'disabled'}.`, data: { twoFactorEnabled: account.twoFactorEnabled } });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+};
+
+// PUT /api/auth/consent – authenticated, Employee only. Body: { version }.
+// Records acceptance of the privacy notice (see PrivacyConsentModal.vue).
+// HR_Admin accounts don't go through this — they set up the tenant and
+// aren't the employee-data subjects this notice is written for.
+export const setPrivacyConsent = async (req, res) => {
+  try {
+    if (req.userRole !== 'Employee')
+      return res.status(403).json({ success: false, message: 'Not applicable to this account type.' });
+
+    const { version } = req.body;
+    if (!version) return res.status(400).json({ success: false, message: 'version is required.' });
+
+    const emp = await Employee.findById(req.user._id);
+    if (!emp) return res.status(404).json({ success: false, message: 'Account not found.' });
+
+    emp.privacyConsent = { accepted: true, acceptedAt: new Date(), version };
+    await emp.save();
+
+    res.json({ success: true, message: 'Privacy notice accepted.', data: { privacyConsent: emp.privacyConsent } });
   } catch (err) {
     res.status(500).json({ success: false, message: err.message });
   }
