@@ -1,11 +1,57 @@
 import Leave from '../models/Leave.js';
 import Employee from '../models/Employee.js';
 import User from '../models/User.js';
+import Tenant from '../models/Tenant.js';
 import { sendEmail } from '../utils/email.js';
 import { leaveRequested, leaveStatusUpdate } from '../utils/emailTemplates.js';
 
 // Helper to format dates for emails
 const fmtDate = (d) => new Date(d).toLocaleDateString('en-NG', { day: 'numeric', month: 'short', year: 'numeric' });
+
+const LEAVE_TYPES = ['Annual', 'Sick', 'Maternity', 'Paternity', 'Compassionate', 'Study', 'Unpaid', 'Emergency'];
+
+// GET /api/leave-policy – any authenticated role (employees need to see their own entitlement)
+export const getLeavePolicy = async (req, res) => {
+  try {
+    const tenant = await Tenant.findById(req.tenantId).select('leavePolicy');
+    res.json({ success: true, data: tenant?.leavePolicy || {} });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+};
+
+// PUT /api/leave-policy – HR only. Body: { Annual: 20, Sick: 12, ... }.
+// A value of 0 means "no cap" for that leave type.
+export const updateLeavePolicy = async (req, res) => {
+  try {
+    const updates = {};
+    for (const type of LEAVE_TYPES) {
+      if (req.body[type] === undefined) continue;
+      const days = Number(req.body[type]);
+      if (isNaN(days) || days < 0)
+        return res.status(400).json({ success: false, message: `${type} must be a non-negative number of days.` });
+      updates[`leavePolicy.${type}`] = days;
+    }
+    const tenant = await Tenant.findByIdAndUpdate(req.tenantId, { $set: updates }, { new: true }).select('leavePolicy');
+    res.json({ success: true, message: 'Leave policy updated.', data: tenant.leavePolicy });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+};
+
+// Sums workingDays already committed (anything not Rejected — Pending counts
+// too, so an employee can't stack several pending requests past their cap)
+// for one employee/type within a calendar year.
+const daysUsedInYear = async (tenantId, employeeId, type, year) => {
+  const yearStart = new Date(Date.UTC(year, 0, 1));
+  const yearEnd = new Date(Date.UTC(year, 11, 31, 23, 59, 59, 999));
+  const records = await Leave.find({
+    tenantId, employeeId, type,
+    status: { $ne: 'Rejected' },
+    startDate: { $gte: yearStart, $lte: yearEnd },
+  }).select('workingDays');
+  return records.reduce((sum, r) => sum + (r.workingDays || 0), 0);
+};
 
 // GET /api/leaves
 export const getLeaves = async (req, res) => {
@@ -46,6 +92,22 @@ export const createLeave = async (req, res) => {
     for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
       const day = d.getDay();
       if (day !== 0 && day !== 6) workingDays++;
+    }
+
+    // Hard-block requests that exceed the company's leave policy for this
+    // type. A policy value of 0 (e.g. Unpaid by default) means no cap.
+    const tenant = await Tenant.findById(tid).select('leavePolicy');
+    const entitlement = tenant?.leavePolicy?.[type];
+    if (entitlement > 0) {
+      const year = start.getUTCFullYear();
+      const used = await daysUsedInYear(tid, employeeId, type, year);
+      const remaining = Math.max(entitlement - used, 0);
+      if (workingDays > remaining) {
+        return res.status(400).json({
+          success: false,
+          message: `This request (${workingDays} day${workingDays === 1 ? '' : 's'}) exceeds ${emp.name}'s remaining ${type} leave balance — ${remaining} of ${entitlement} day(s) left for ${year}.`,
+        });
+      }
     }
 
     const leave = await Leave.create({

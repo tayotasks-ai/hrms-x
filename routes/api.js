@@ -7,7 +7,7 @@ import { getDepartments, createDepartment, updateDepartment, deleteDepartment } 
 import { loginUser, changePassword, forgotPassword, resetPassword } from '../controllers/authController.js';
 import { getDashboardStats } from '../controllers/dashboardController.js';
 import { getEmployees, getEmployee, createEmployee, bulkCreateEmployees, updateEmployee, getMe, updateEmployeeManager, getDirectoryLite } from '../controllers/employeeController.js';
-import { getLeaves, createLeave, updateLeaveStatus } from '../controllers/leaveController.js';
+import { getLeaves, createLeave, updateLeaveStatus, getLeavePolicy, updateLeavePolicy } from '../controllers/leaveController.js';
 import { getPayslips, createPayslip, getPayslipPdf } from '../controllers/payslipController.js';
 import { getKpis, createKpi, updateKpi, submitSelfReview, submitManagerReview, getKpiSummary } from '../controllers/kpiController.js';
 import { getPerformanceCycles, createPerformanceCycle, updatePerformanceCycle } from '../controllers/performanceCycleController.js';
@@ -97,6 +97,8 @@ router.delete('/departments/:id', hrOnly, deleteDepartment);
 router.get('/leaves', getLeaves);
 router.post('/leaves', createLeave);
 router.put('/leaves/:id', hrOnly, updateLeaveStatus);
+router.get('/leave-policy', getLeavePolicy);
+router.put('/leave-policy', hrOnly, updateLeavePolicy);
 
 // Payroll
 router.get('/payslips', getPayslips);
