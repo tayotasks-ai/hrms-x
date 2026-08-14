@@ -4,19 +4,25 @@ import PerformanceCycle from '../models/PerformanceCycle.js';
 import User from '../models/User.js';
 import { sendEmail } from '../utils/email.js';
 import { kpiSelfReviewSubmitted, kpiSignedOff } from '../utils/emailTemplates.js';
+import { notify } from '../utils/notify.js';
 
 // Notify whoever needs to act next on a KPI review. Falls back to notifying
 // every HR Admin for the tenant when the employee has no manager set (e.g.
 // department heads), since submitManagerReview already lets HR sign off in
 // that case.
-const notifyNextReviewer = async (tid, employee, tpl) => {
+const notifyNextReviewer = async (tid, employee, tpl, inApp) => {
   if (employee?.managerId) {
     const manager = await Employee.findOne({ _id: employee.managerId, tenantId: tid });
-    if (manager?.email) {
-      return sendEmail({ to: manager.email, ...tpl(manager.name) }).catch(err => console.error('Email failed:', err.message));
+    if (manager) {
+      notify({ tenantId: tid, recipientId: manager._id, recipientModel: 'Employee', type: 'kpi', link: 'org', ...inApp });
+      if (manager.email) {
+        return sendEmail({ to: manager.email, ...tpl(manager.name) }).catch(err => console.error('Email failed:', err.message));
+      }
     }
+    return;
   }
   const hrAdmins = await User.find({ tenantId: tid, role: 'HR_Admin' }).select('name email');
+  hrAdmins.forEach(a => notify({ tenantId: tid, recipientId: a._id, recipientModel: 'User', type: 'kpi', link: 'org', ...inApp }));
   await Promise.all(
     hrAdmins.filter(a => a.email).map(a => sendEmail({ to: a.email, ...tpl(a.name) }).catch(err => console.error('Email failed:', err.message)))
   );
@@ -119,7 +125,10 @@ export const submitSelfReview = async (req, res) => {
       employeeName: populated.employeeId?.name || 'An employee',
       kpiTitle: populated.title,
       score,
-    })).catch(err => console.error('KPI notify failed:', err.message));
+    }), {
+      title: 'KPI ready for your review',
+      message: `${populated.employeeId?.name || 'An employee'} submitted a self-review for "${populated.title}" — awaiting your sign-off.`,
+    }).catch(err => console.error('KPI notify failed:', err.message));
 
     res.json({ success: true, message: 'Self-review submitted.', data: populated });
   } catch (err) {
@@ -161,6 +170,14 @@ export const submitManagerReview = async (req, res) => {
       .populate('cycleId', 'name status');
 
     // Fire-and-forget – let the employee know their KPI was signed off
+    if (populated.employeeId) {
+      notify({
+        tenantId: tid, recipientId: populated.employeeId._id, recipientModel: 'Employee',
+        type: 'kpi', link: 'org',
+        title: 'KPI signed off',
+        message: `"${populated.title}" was signed off with a final score of ${score}/5.`,
+      });
+    }
     if (populated.employeeId?.email) {
       const tpl = kpiSignedOff({
         employeeName: populated.employeeId.name,

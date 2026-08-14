@@ -1,14 +1,15 @@
 import express from 'express';
 import { protect, hrOnly } from '../middleware/authMiddleware.js';
+import { authLimiter } from '../middleware/rateLimiter.js';
 
 // Controllers
 import { getTenants, createTenant } from '../controllers/tenantController.js';
 import { getDepartments, createDepartment, updateDepartment, deleteDepartment } from '../controllers/departmentController.js';
-import { loginUser, changePassword, forgotPassword, resetPassword } from '../controllers/authController.js';
+import { loginUser, changePassword, forgotPassword, resetPassword, verifyLoginOtp, setTwoFactor } from '../controllers/authController.js';
 import { getDashboardStats } from '../controllers/dashboardController.js';
 import { getEmployees, getEmployee, createEmployee, bulkCreateEmployees, updateEmployee, getMe, updateEmployeeManager, getDirectoryLite } from '../controllers/employeeController.js';
 import { getLeaves, createLeave, updateLeaveStatus, getLeavePolicy, updateLeavePolicy } from '../controllers/leaveController.js';
-import { getPayslips, createPayslip, getPayslipPdf } from '../controllers/payslipController.js';
+import { getPayslips, createPayslip, getPayslipPdf, getRemittanceReport } from '../controllers/payslipController.js';
 import { getKpis, createKpi, updateKpi, submitSelfReview, submitManagerReview, getKpiSummary } from '../controllers/kpiController.js';
 import { getPerformanceCycles, createPerformanceCycle, updatePerformanceCycle } from '../controllers/performanceCycleController.js';
 import { getCompliances, createCompliance, seedDefaults, updateCompliance } from '../controllers/complianceController.js';
@@ -33,6 +34,7 @@ import { getPaymentSettings, connectPaystack, disconnectPaystack } from '../cont
 import { getBanks, verifyBankAccount } from '../controllers/bankController.js';
 import { payPayslip, payBatch, finalizePayslipPayment } from '../controllers/payslipPaymentController.js';
 import { handlePaystackWebhook } from '../controllers/webhookController.js';
+import { getNotifications, markNotificationRead, markAllNotificationsRead } from '../controllers/notificationController.js';
 
 const router = express.Router();
 
@@ -40,9 +42,10 @@ const router = express.Router();
 router.get('/health', (req, res) => res.json({ success: true, status: 'ok', message: 'HRMS X API operational.' }));
 router.get('/tenants', getTenants);
 router.post('/tenants', createTenant);
-router.post('/auth/login', loginUser);
-router.post('/auth/forgot-password', forgotPassword);
-router.post('/auth/reset-password', resetPassword);
+router.post('/auth/login', authLimiter, loginUser);
+router.post('/auth/verify-otp', authLimiter, verifyLoginOtp);
+router.post('/auth/forgot-password', authLimiter, forgotPassword);
+router.post('/auth/reset-password', authLimiter, resetPassword);
 router.post('/webhooks/paystack', handlePaystackWebhook);
 
 // ── All authenticated routes require protect middleware ────────────────────────
@@ -53,6 +56,7 @@ router.get('/dashboard/stats', getDashboardStats);
 
 // Auth (authenticated)
 router.put('/auth/change-password', changePassword);
+router.put('/auth/2fa', setTwoFactor);
 
 // Shoutouts
 router.get('/shoutouts', getShoutouts);
@@ -67,6 +71,11 @@ router.get('/attendance/today', hrOnly, getTodayAttendance);
 
 // Audit Log
 router.get('/audit-log', hrOnly, getAuditLog);
+
+// Notifications
+router.get('/notifications', getNotifications);
+router.put('/notifications/:id/read', markNotificationRead);
+router.put('/notifications/read-all', markAllNotificationsRead);
 
 // Payment Settings (Paystack connection)
 router.get('/payment-settings', hrOnly, getPaymentSettings);
@@ -96,13 +105,14 @@ router.delete('/departments/:id', hrOnly, deleteDepartment);
 // Leaves
 router.get('/leaves', getLeaves);
 router.post('/leaves', createLeave);
-router.put('/leaves/:id', hrOnly, updateLeaveStatus);
+router.put('/leaves/:id', updateLeaveStatus); // manager (first sign-off) or HR (final) — enforced in controller
 router.get('/leave-policy', getLeavePolicy);
 router.put('/leave-policy', hrOnly, updateLeavePolicy);
 
 // Payroll
 router.get('/payslips', getPayslips);
 router.post('/payslips', hrOnly, createPayslip);
+router.get('/payslips/remittance', hrOnly, getRemittanceReport);
 router.get('/payslips/:id/pdf', getPayslipPdf);
 router.post('/payslips/pay-batch', hrOnly, payBatch);
 router.post('/payslips/:id/pay', hrOnly, payPayslip);

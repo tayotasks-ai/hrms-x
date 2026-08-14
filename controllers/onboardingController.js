@@ -2,6 +2,7 @@ import Onboarding from '../models/Onboarding.js';
 import Employee from '../models/Employee.js';
 import { sendEmail } from '../utils/email.js';
 import { onboardingPlanCreated } from '../utils/emailTemplates.js';
+import { notify } from '../utils/notify.js';
 
 // GET /api/onboarding
 export const getOnboardings = async (req, res) => {
@@ -45,6 +46,12 @@ export const createOnboarding = async (req, res) => {
       .populate('tasks.assignedTo', 'name role');
 
     // Fire-and-forget – notify employee
+    notify({
+      tenantId: tid, recipientId: emp._id, recipientModel: 'Employee',
+      type: 'onboarding', link: 'onboarding',
+      title: 'Your onboarding plan is ready',
+      message: `HR set up an onboarding checklist for you with ${(tasks || []).length} task(s).`,
+    });
     if (emp.email) {
       const tpl = onboardingPlanCreated({ employeeName: emp.name, taskCount: (tasks || []).length });
       sendEmail({ to: emp.email, ...tpl }).catch(err => console.error('Email failed:', err.message));

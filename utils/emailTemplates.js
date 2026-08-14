@@ -293,6 +293,21 @@ export const passwordResetRequested = ({ name, resetUrl }) => ({
   `)
 });
 
+// ─── 15b. Login OTP (email-based 2FA, opt-in) ──────────────────────────────
+export const loginOtpCode = ({ name, code }) => ({
+  subject: `Your HRMS-X login code: ${code}`,
+  html: wrap(`
+    ${heading('Your Login Code 🔑')}
+    ${para(`Hi <strong>${name}</strong>,`)}
+    ${para('Enter this code to finish signing in. It expires in 10 minutes.')}
+    <div style="text-align:center;padding:16px 0;">
+      <span style="display:inline-block;font-size:32px;font-weight:700;letter-spacing:8px;color:#111827;background:#f4f6f8;padding:12px 24px;border-radius:8px;">${code}</span>
+    </div>
+    ${divider()}
+    ${para("If you didn't try to log in, you can ignore this email — your account is safe.")}
+  `)
+});
+
 // ─── 16. KPI Self-Review Submitted (sent to manager) ───────────────────────
 export const kpiSelfReviewSubmitted = ({ managerName, employeeName, kpiTitle, score }) => ({
   subject: `KPI Self-Review Submitted – ${employeeName}`,

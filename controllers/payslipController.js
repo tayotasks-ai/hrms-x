@@ -5,6 +5,7 @@ import { sendEmail } from '../utils/email.js';
 import { payslipAvailable } from '../utils/emailTemplates.js';
 import { calculateNigerianPayroll } from '../utils/payrollCalc.js';
 import { streamPayslipPdf } from '../utils/payslipPdf.js';
+import { notify } from '../utils/notify.js';
 
 // GET /api/payslips  – employees only see their own
 export const getPayslips = async (req, res) => {
@@ -54,6 +55,12 @@ export const createPayslip = async (req, res) => {
       .populate({ path: 'employeeId', select: 'name role departmentId email', populate: { path: 'departmentId', select: 'name' } });
 
     // Fire-and-forget – notify employee
+    notify({
+      tenantId: tid, recipientId: emp._id, recipientModel: 'Employee',
+      type: 'payslip', link: 'payroll',
+      title: 'New payslip available',
+      message: `Your payslip for ${period} is ready.`,
+    });
     if (emp.email) {
       const tpl = payslipAvailable({ employeeName: emp.name, period, netPay });
       sendEmail({ to: emp.email, ...tpl }).catch(err => console.error('Email failed:', err.message));
@@ -63,6 +70,72 @@ export const createPayslip = async (req, res) => {
   } catch (err) {
     if (err.code === 11000)
       return res.status(409).json({ success: false, message: 'A payslip for this employee and period already exists.' });
+    res.status(500).json({ success: false, message: err.message });
+  }
+};
+
+// GET /api/payslips/remittance?period=<period>&type=paye|pension|nhf – HR only.
+// CSV export of one payroll period's statutory deductions, one file per
+// filing body: PAYE -> FIRS, Pension -> PenCom, NHF -> Federal Mortgage
+// Bank of Nigeria. This is a starting point for HR to file manually — it is
+// NOT a certified template from any of these bodies, and the pension
+// "pensionable pay" figure inherits the Basic+Allowances approximation
+// noted in utils/payrollCalc.js (statutorily it's Basic+Housing+Transport,
+// which this system doesn't track as separate components).
+const esc = (v) => {
+  const s = String(v ?? '');
+  return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+};
+
+export const getRemittanceReport = async (req, res) => {
+  try {
+    const tid = req.tenantId;
+    const { period, type } = req.query;
+    if (!period) return res.status(400).json({ success: false, message: 'period is required.' });
+    if (!['paye', 'pension', 'nhf'].includes(type))
+      return res.status(400).json({ success: false, message: 'type must be one of: paye, pension, nhf.' });
+
+    const payslips = (await Payslip.find({ tenantId: tid, period })
+      .populate({ path: 'employeeId', select: 'name regulatory basicSalary allowances' }))
+      .sort((a, b) => (a.employeeId?.name || '').localeCompare(b.employeeId?.name || ''));
+
+    if (payslips.length === 0)
+      return res.status(404).json({ success: false, message: `No payslips found for period "${period}".` });
+
+    const rows = [];
+    let total = 0;
+
+    if (type === 'paye') {
+      rows.push(['Employee Name', 'TIN', 'Gross Pay', 'PAYE Amount'].map(esc).join(','));
+      for (const p of payslips) {
+        const amount = p.deductions?.paye || 0;
+        total += amount;
+        rows.push([p.employeeId?.name || 'Deleted Employee', p.employeeId?.regulatory?.tin || '', p.grossPay, amount].map(esc).join(','));
+      }
+    } else if (type === 'pension') {
+      rows.push(['Employee Name', 'RSA/PIN', 'PFA', 'Pensionable Pay', 'Employee Pension (8%)'].map(esc).join(','));
+      for (const p of payslips) {
+        const amount = p.deductions?.pension || 0;
+        total += amount;
+        rows.push([p.employeeId?.name || 'Deleted Employee', p.employeeId?.regulatory?.rsa || '', p.employeeId?.regulatory?.pfa || '', p.grossPay, amount].map(esc).join(','));
+      }
+    } else {
+      rows.push(['Employee Name', 'NHF Number', 'Basic Salary', 'NHF Amount (2.5%)'].map(esc).join(','));
+      for (const p of payslips) {
+        const amount = p.deductions?.nhf || 0;
+        total += amount;
+        rows.push([p.employeeId?.name || 'Deleted Employee', p.employeeId?.regulatory?.nhf || '', p.basicSalary, amount].map(esc).join(','));
+      }
+    }
+
+    rows.push('');
+    rows.push(['TOTAL', total.toFixed(2)].map(esc).join(','));
+
+    const filename = `${type}-remittance-${period.replace(/\s+/g, '-')}.csv`;
+    res.setHeader('Content-Type', 'text/csv');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    res.send(rows.join('\n'));
+  } catch (err) {
     res.status(500).json({ success: false, message: err.message });
   }
 };

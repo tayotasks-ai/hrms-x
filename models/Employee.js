@@ -85,7 +85,14 @@ const employeeSchema = new mongoose.Schema({
   isDefaultPassword: { type: Boolean, default: true },
   resetPasswordToken: { type: String, select: false },
   resetPasswordExpires: { type: Date, select: false },
-  
+  // Brute-force login protection (see controllers/authController.js).
+  failedLoginAttempts: { type: Number, default: 0, select: false },
+  lockUntil: { type: Date, select: false },
+  // Optional email OTP 2FA — off by default, user opts in from account settings.
+  twoFactorEnabled: { type: Boolean, default: false },
+  twoFactorOtpHash: { type: String, select: false },
+  twoFactorOtpExpires: { type: Date, select: false },
+
   createdAt: { type: Date, default: Date.now }
 });
 

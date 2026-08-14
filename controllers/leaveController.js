@@ -4,6 +4,8 @@ import User from '../models/User.js';
 import Tenant from '../models/Tenant.js';
 import { sendEmail } from '../utils/email.js';
 import { leaveRequested, leaveStatusUpdate } from '../utils/emailTemplates.js';
+import { isNigerianPublicHoliday } from '../utils/nigerianHolidays.js';
+import { notify, notifyHrAdmins } from '../utils/notify.js';
 
 // Helper to format dates for emails
 const fmtDate = (d) => new Date(d).toLocaleDateString('en-NG', { day: 'numeric', month: 'short', year: 'numeric' });
@@ -53,15 +55,21 @@ const daysUsedInYear = async (tenantId, employeeId, type, year) => {
   return records.reduce((sum, r) => sum + (r.workingDays || 0), 0);
 };
 
-// GET /api/leaves
+// GET /api/leaves — employees see their own requests PLUS anything from
+// people who report directly to them (needed for the manager-approval step
+// below; otherwise a manager would never see requests to act on).
 export const getLeaves = async (req, res) => {
   try {
     const tid = req.tenantId;
-    const query = { tenantId: tid };
-    if (req.userRole === 'Employee') query.employeeId = req.user._id;
+    let query = { tenantId: tid };
+    if (req.userRole === 'Employee') {
+      const directReports = await Employee.find({ tenantId: tid, managerId: req.user._id }).select('_id');
+      const reportIds = directReports.map(e => e._id);
+      query = { tenantId: tid, employeeId: { $in: [req.user._id, ...reportIds] } };
+    }
 
     const leaves = await Leave.find(query)
-      .populate({ path: 'employeeId', select: 'name role departmentId', populate: { path: 'departmentId', select: 'name' } })
+      .populate({ path: 'employeeId', select: 'name role departmentId managerId', populate: { path: 'departmentId', select: 'name' } })
       .populate('reliefOfficer', 'name')
       .sort({ createdAt: -1 });
 
@@ -85,13 +93,15 @@ export const createLeave = async (req, res) => {
     const emp = await Employee.findOne({ _id: employeeId, tenantId: tid });
     if (!emp) return res.status(404).json({ success: false, message: 'Employee not found in this organisation.' });
 
-    // Count working days (Mon–Fri only, excluding Nigerian public holidays is configurable later)
+    // Count working days: Mon–Fri, excluding Nigerian federal public
+    // holidays (fixed-date + Easter-derived — see utils/nigerianHolidays.js
+    // for the Islamic-holiday caveat).
     const start = new Date(startDate);
     const end = new Date(endDate);
     let workingDays = 0;
     for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
       const day = d.getDay();
-      if (day !== 0 && day !== 6) workingDays++;
+      if (day !== 0 && day !== 6 && !isNigerianPublicHoliday(d)) workingDays++;
     }
 
     // Hard-block requests that exceed the company's leave policy for this
@@ -121,20 +131,33 @@ export const createLeave = async (req, res) => {
       .populate({ path: 'employeeId', select: 'name role departmentId', populate: { path: 'departmentId', select: 'name' } })
       .populate('reliefOfficer', 'name');
 
-    // Fire-and-forget – notify HR admins
-    User.find({ tenantId: tid, role: 'HR_Admin' }).select('email').lean()
-      .then(admins => {
-        const emails = admins.map(a => a.email).filter(Boolean);
-        if (emails.length) {
-          const tpl = leaveRequested({
-            employeeName: emp.name, leaveType: type,
-            startDate: fmtDate(start), endDate: fmtDate(end),
-            workingDays, reason,
-          });
-          sendEmail({ to: emails, ...tpl }).catch(err => console.error('Email failed:', err.message));
-        }
-      })
-      .catch(err => console.error('Email lookup failed:', err.message));
+    // Fire-and-forget – notify whoever acts first: the employee's manager if
+    // they have one, otherwise HR (mirrors the KPI review fallback).
+    const notifTitle = 'New leave request';
+    const notifMessage = `${emp.name} requested ${workingDays} day(s) of ${type} leave (${fmtDate(start)} – ${fmtDate(end)}).`;
+    if (emp.managerId) {
+      Employee.findOne({ _id: emp.managerId, tenantId: tid }).select('name email')
+        .then(manager => {
+          if (!manager) return;
+          notify({ tenantId: tid, recipientId: manager._id, recipientModel: 'Employee', type: 'leave', title: notifTitle, message: notifMessage, link: 'leaves' });
+          if (manager.email) {
+            const tpl = leaveRequested({ employeeName: emp.name, leaveType: type, startDate: fmtDate(start), endDate: fmtDate(end), workingDays, reason });
+            sendEmail({ to: manager.email, ...tpl }).catch(err => console.error('Email failed:', err.message));
+          }
+        })
+        .catch(err => console.error('Manager lookup failed:', err.message));
+    } else {
+      notifyHrAdmins(User, tid, { type: 'leave', title: notifTitle, message: notifMessage, link: 'leaves' });
+      User.find({ tenantId: tid, role: 'HR_Admin' }).select('email').lean()
+        .then(admins => {
+          const emails = admins.map(a => a.email).filter(Boolean);
+          if (emails.length) {
+            const tpl = leaveRequested({ employeeName: emp.name, leaveType: type, startDate: fmtDate(start), endDate: fmtDate(end), workingDays, reason });
+            sendEmail({ to: emails, ...tpl }).catch(err => console.error('Email failed:', err.message));
+          }
+        })
+        .catch(err => console.error('Email lookup failed:', err.message));
+    }
 
     res.status(201).json({ success: true, message: 'Leave request submitted.', data: populated });
   } catch (err) {
@@ -143,14 +166,17 @@ export const createLeave = async (req, res) => {
 };
 
 // PUT /api/leaves/:id
+// Two-step approval: the employee's direct manager gives the first sign-off
+// (Pending -> Manager Approved), then HR gives the final sign-off
+// (Manager Approved -> HR Approved -> Processed). If the employee has no
+// manager, HR can approve directly from Pending — same fallback pattern as
+// the KPI review chain. Reject is allowed from Pending or Manager Approved,
+// by either the manager or HR.
 export const updateLeaveStatus = async (req, res) => {
   try {
     const tid = req.tenantId;
     const { status } = req.body;
-
-    // Only HR can approve/reject
-    if (req.userRole === 'Employee')
-      return res.status(403).json({ success: false, message: 'Employees cannot approve or reject leaves.' });
+    const isHR = req.userRole !== 'Employee';
 
     const validStatuses = ['Manager Approved', 'HR Approved', 'Rejected', 'Processed'];
     if (!validStatuses.includes(status))
@@ -159,14 +185,54 @@ export const updateLeaveStatus = async (req, res) => {
     const leave = await Leave.findOne({ _id: req.params.id, tenantId: tid });
     if (!leave) return res.status(404).json({ success: false, message: 'Leave request not found.' });
 
+    const emp = await Employee.findOne({ _id: leave.employeeId, tenantId: tid });
+    const isManager = !isHR && emp?.managerId?.toString() === req.user._id.toString();
+
+    if (!isHR && !isManager)
+      return res.status(403).json({ success: false, message: "Only the employee's manager or HR can update this leave request." });
+
+    if (status === 'Manager Approved') {
+      if (leave.status !== 'Pending')
+        return res.status(400).json({ success: false, message: `Cannot give manager approval from status "${leave.status}".` });
+    } else if (status === 'HR Approved') {
+      if (!isHR) return res.status(403).json({ success: false, message: 'Only HR can give final approval.' });
+      const allowedFrom = emp?.managerId ? ['Manager Approved'] : ['Pending', 'Manager Approved'];
+      if (!allowedFrom.includes(leave.status))
+        return res.status(400).json({ success: false, message: `This request needs manager approval first (currently "${leave.status}").` });
+    } else if (status === 'Processed') {
+      if (!isHR) return res.status(403).json({ success: false, message: 'Only HR can mark a leave as processed.' });
+      if (leave.status !== 'HR Approved')
+        return res.status(400).json({ success: false, message: `Cannot mark processed from status "${leave.status}".` });
+    } else if (status === 'Rejected') {
+      if (!['Pending', 'Manager Approved'].includes(leave.status))
+        return res.status(400).json({ success: false, message: `Cannot reject from status "${leave.status}".` });
+    }
+
     leave.status = status;
     await leave.save();
 
     const populated = await Leave.findById(leave._id)
-      .populate({ path: 'employeeId', select: 'name role departmentId email', populate: { path: 'departmentId', select: 'name' } })
+      .populate({ path: 'employeeId', select: 'name role departmentId managerId email', populate: { path: 'departmentId', select: 'name' } })
       .populate('reliefOfficer', 'name');
 
-    // Fire-and-forget – notify employee
+    // Fire-and-forget – notify whoever needs to know next
+    if (status === 'Manager Approved') {
+      // Tell HR it's ready for final sign-off
+      notifyHrAdmins(User, tid, {
+        type: 'leave', link: 'leaves',
+        title: 'Leave ready for HR approval',
+        message: `${populated.employeeId?.name || 'An employee'}'s ${leave.type} leave was approved by their manager and needs final HR sign-off.`,
+      });
+    } else if (populated.employeeId) {
+      // Any other transition (HR Approved, Rejected, Processed) — tell the employee
+      notify({
+        tenantId: tid, recipientId: populated.employeeId._id, recipientModel: 'Employee',
+        type: 'leave', link: 'leaves',
+        title: `Leave request ${status.toLowerCase()}`,
+        message: `Your ${leave.type} leave (${fmtDate(leave.startDate)} – ${fmtDate(leave.endDate)}) is now "${status}".`,
+      });
+    }
+
     if (populated.employeeId?.email) {
       const tpl = leaveStatusUpdate({
         employeeName: populated.employeeId.name,
