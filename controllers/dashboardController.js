@@ -8,6 +8,33 @@ import Onboarding from '../models/Onboarding.js';
 
 const fmtDate = (d) => d ? new Date(d).toLocaleDateString('en-NG', { day: 'numeric', month: 'short' }) : '—';
 
+// Birthdays and work anniversaries falling in the current calendar month,
+// for the "Upcoming Milestones" panel. Matches on month/day only (not
+// year), so this naturally recurs every year without any stored state.
+// Anniversaries only count once the join year has passed (years >= 1).
+export const buildMonthlyMilestones = (employees, today) => {
+  const month = today.getMonth();
+  const items = [];
+
+  employees.forEach((e) => {
+    if (e.birthDate) {
+      const bd = new Date(e.birthDate);
+      if (bd.getMonth() === month) {
+        items.push({ type: 'Birthday', name: e.name, role: e.role, date: bd.getDate(), detail: 'Birthday' });
+      }
+    }
+    if (e.joinDate) {
+      const jd = new Date(e.joinDate);
+      if (jd.getMonth() === month && jd.getFullYear() < today.getFullYear()) {
+        const years = today.getFullYear() - jd.getFullYear();
+        items.push({ type: 'Anniversary', name: e.name, role: e.role, date: jd.getDate(), detail: `${years} year${years === 1 ? '' : 's'}` });
+      }
+    }
+  });
+
+  return items.sort((a, b) => a.date - b.date);
+};
+
 // Builds the "Action Inbox": every record across existing modules that is
 // actually waiting on this HR admin, ranked by how long it's been waiting.
 const buildActionInbox = async (tid) => {
@@ -125,6 +152,7 @@ export const getDashboardStats = async (req, res) => {
       probationsExpiringSoon,
       openTickets,
       activeEmployees,
+      milestoneEmployees,
       departmentBreakdown,
       actionInbox,
     ] = await Promise.all([
@@ -139,6 +167,7 @@ export const getDashboardStats = async (req, res) => {
       }),
       HelpdeskTicket.countDocuments({ tenantId: tid, status: { $in: ['Open', 'In Progress'] } }),
       Employee.find({ tenantId: tid, status: { $in: ['Active', 'Onboarding'] } }).select('salary'),
+      Employee.find({ tenantId: tid, status: { $ne: 'Offboarded' } }).select('name role birthDate joinDate'),
       Employee.aggregate([
         { $match: { tenantId: tid, status: { $ne: 'Offboarded' } } },
         { $lookup: { from: 'departments', localField: 'departmentId', foreignField: '_id', as: 'dept' } },
@@ -150,6 +179,7 @@ export const getDashboardStats = async (req, res) => {
     ]);
 
     const monthlyPayroll = activeEmployees.reduce((sum, e) => sum + (e.salary || 0), 0);
+    const milestones = buildMonthlyMilestones(milestoneEmployees, today);
 
     res.json({
       success: true,
@@ -168,6 +198,7 @@ export const getDashboardStats = async (req, res) => {
           return acc;
         }, {}),
         actionInbox,
+        milestones,
       },
     });
   } catch (err) {
