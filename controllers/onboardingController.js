@@ -89,6 +89,47 @@ export const updateOnboardingTask = async (req, res) => {
   }
 };
 
+// POST /api/onboarding/:id/task  – HR only. Append a new task to an existing plan.
+export const addOnboardingTask = async (req, res) => {
+  try {
+    const tid = req.tenantId;
+    const record = await Onboarding.findOne({ _id: req.params.id, tenantId: tid });
+    if (!record) return res.status(404).json({ success: false, message: 'Onboarding record not found.' });
+
+    const { title, description, assignedTo, dueDate } = req.body;
+    if (!title?.trim()) return res.status(400).json({ success: false, message: 'Task title is required.' });
+
+    record.tasks.push({
+      title: title.trim(),
+      description: description?.trim() || '',
+      assignedTo: assignedTo || undefined,
+      dueDate: dueDate || undefined,
+      status: 'Pending',
+    });
+    await record.save(); // pre('save') hook recalculates completionPercentage
+
+    const populated = await Onboarding.findById(record._id)
+      .populate({ path: 'employeeId', select: 'name role departmentId email joinDate', populate: { path: 'departmentId', select: 'name' } })
+      .populate('tasks.assignedTo', 'name role');
+
+    res.status(201).json({ success: true, message: 'Task added.', data: populated });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+};
+
+// DELETE /api/onboarding/:id  – HR only. Removes an onboarding plan entirely
+// (e.g. created in error, or the hire fell through).
+export const deleteOnboarding = async (req, res) => {
+  try {
+    const record = await Onboarding.findOneAndDelete({ _id: req.params.id, tenantId: req.tenantId });
+    if (!record) return res.status(404).json({ success: false, message: 'Onboarding record not found.' });
+    res.json({ success: true, message: 'Onboarding plan deleted.' });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+};
+
 // PUT /api/onboarding/:id/stage  – advance stage (HR only)
 export const updateOnboardingStage = async (req, res) => {
   try {

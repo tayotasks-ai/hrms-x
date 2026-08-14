@@ -13,7 +13,7 @@ import { getKpis, createKpi, updateKpi, submitSelfReview, submitManagerReview, g
 import { getPerformanceCycles, createPerformanceCycle, updatePerformanceCycle } from '../controllers/performanceCycleController.js';
 import { getCompliances, createCompliance, seedDefaults, updateCompliance } from '../controllers/complianceController.js';
 import { getDocuments, createDocument, updateDocument } from '../controllers/documentController.js';
-import { getOnboardings, createOnboarding, updateOnboardingTask, updateOnboardingStage } from '../controllers/onboardingController.js';
+import { getOnboardings, createOnboarding, updateOnboardingTask, updateOnboardingStage, addOnboardingTask, deleteOnboarding } from '../controllers/onboardingController.js';
 import { getProbations, createProbation, recordOutcome } from '../controllers/probationController.js';
 import { getEmploymentHistories, createEmploymentHistory } from '../controllers/employmentHistoryController.js';
 import { getRequisitions, createRequisition, updateRequisitionStatus } from '../controllers/requisitionController.js';
@@ -132,8 +132,10 @@ router.put('/documents/:id', hrOnly, updateDocument);
 // Onboarding
 router.get('/onboarding', getOnboardings);
 router.post('/onboarding', hrOnly, createOnboarding);
-router.put('/onboarding/:id/task/:taskId', updateOnboardingTask);
+router.post('/onboarding/:id/task', hrOnly, addOnboardingTask);
+router.put('/onboarding/:id/task/:taskId', hrOnly, updateOnboardingTask); // was open to any authenticated role — tightened to HR since task completion is an HR-managed action in this UI
 router.put('/onboarding/:id/stage', hrOnly, updateOnboardingStage);
+router.delete('/onboarding/:id', hrOnly, deleteOnboarding);
 
 // Probation
 router.get('/probation', getProbations);
