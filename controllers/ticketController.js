@@ -6,7 +6,7 @@ import { ticketReply } from '../utils/emailTemplates.js';
 export const getTickets = async (req, res) => {
   try {
     const tickets = await HelpdeskTicket.find({ tenantId: req.tenantId })
-      .populate('employeeId', 'name role department email status')
+      .populate({ path: 'employeeId', select: 'name role departmentId email status', populate: { path: 'departmentId', select: 'name' } })
       .populate('assignedTo', 'name role')
       .populate('messages.sender', 'name role')
       .sort({ createdAt: -1 });
@@ -32,7 +32,7 @@ export const createTicket = async (req, res) => {
     const saved = await newTicket.save();
     
     const populated = await HelpdeskTicket.findById(saved._id)
-      .populate('employeeId', 'name role department')
+      .populate({ path: 'employeeId', select: 'name role departmentId', populate: { path: 'departmentId', select: 'name' } })
       .populate('assignedTo', 'name');
       
     res.status(201).json({ success: true, data: populated });
@@ -55,7 +55,7 @@ export const updateTicket = async (req, res) => {
     await ticket.save();
     
     const populated = await HelpdeskTicket.findById(ticket._id)
-      .populate('employeeId', 'name role department email status')
+      .populate({ path: 'employeeId', select: 'name role departmentId email status', populate: { path: 'departmentId', select: 'name' } })
       .populate('assignedTo', 'name role')
       .populate('messages.sender', 'name role');
 
@@ -81,7 +81,7 @@ export const addMessage = async (req, res) => {
     await ticket.save();
     
     const populated = await HelpdeskTicket.findById(ticket._id)
-      .populate('employeeId', 'name role department email status')
+      .populate({ path: 'employeeId', select: 'name role departmentId email status', populate: { path: 'departmentId', select: 'name' } })
       .populate('assignedTo', 'name role email')
       .populate('messages.sender', 'name role');
 

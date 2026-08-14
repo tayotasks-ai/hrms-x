@@ -17,8 +17,14 @@ export const getTenants = async (req, res) => {
 export const createTenant = async (req, res) => {
   try {
     const { name, slug, adminName, adminEmail, adminPassword } = req.body;
-    if (!name || !slug || !adminName || !adminEmail || !adminPassword)
-      return res.status(400).json({ success: false, message: 'All fields are required.' });
+    const missing = [];
+    if (!name) missing.push('Company Name');
+    if (!slug) missing.push('Slug');
+    if (!adminName) missing.push('Admin Name');
+    if (!adminEmail) missing.push('Admin Email');
+    if (!adminPassword) missing.push('Admin Password');
+    if (missing.length)
+      return res.status(400).json({ success: false, message: `Please provide: ${missing.join(', ')}.` });
 
     const existing = await Tenant.findOne({ slug: slug.toLowerCase().trim() });
     if (existing)

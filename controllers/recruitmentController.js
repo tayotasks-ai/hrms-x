@@ -3,8 +3,8 @@ import { InternalJob } from '../models/InternalJob.js';
 export const getInternalJobs = async (req, res) => {
   try {
     const jobs = await InternalJob.find({ tenantId: req.tenantId })
-      .populate('applications.employeeId', 'firstName lastName positionId')
-      .populate('referrals.referrerId', 'firstName lastName');
+      .populate('applications.employeeId', 'name role')
+      .populate('referrals.referrerId', 'name role');
       
     res.json({ success: true, data: jobs });
   } catch (error) {
@@ -15,7 +15,11 @@ export const getInternalJobs = async (req, res) => {
 export const createInternalJob = async (req, res) => {
   try {
     const { title, department, location, description, requirements, closingDate, referralBonus } = req.body;
-    
+
+    const existing = await InternalJob.findOne({ tenantId: req.tenantId, title: title?.trim(), status: { $ne: 'Closed' } });
+    if (existing)
+      return res.status(409).json({ success: false, message: 'An open job posting with this title already exists.' });
+
     const newJob = new InternalJob({
       tenantId: req.tenantId,
       title,

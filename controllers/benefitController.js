@@ -4,7 +4,7 @@ import Employee from '../models/Employee.js';
 export const getBenefits = async (req, res) => {
   try {
     const benefits = await Benefit.find({ tenantId: req.tenantId })
-      .populate('employeeId', 'name role department email status')
+      .populate({ path: 'employeeId', select: 'name role departmentId email status', populate: { path: 'departmentId', select: 'name' } })
       .sort({ lastUpdated: -1 });
     res.json({ success: true, data: benefits });
   } catch (error) {
@@ -29,7 +29,7 @@ export const initBenefitRecord = async (req, res) => {
 
     const saved = await newBenefit.save();
     
-    const populated = await Benefit.findById(saved._id).populate('employeeId', 'name role department email status');
+    const populated = await Benefit.findById(saved._id).populate({ path: 'employeeId', select: 'name role departmentId email status', populate: { path: 'departmentId', select: 'name' } });
       
     res.status(201).json({ success: true, data: populated });
   } catch (error) {
@@ -45,7 +45,7 @@ export const updateBenefit = async (req, res) => {
       { _id: id, tenantId: req.tenantId },
       { ...req.body, lastUpdated: new Date() },
       { new: true, runValidators: true }
-    ).populate('employeeId', 'name role department email status');
+    ).populate({ path: 'employeeId', select: 'name role departmentId email status', populate: { path: 'departmentId', select: 'name' } });
 
     if (!updated) return res.status(404).json({ success: false, message: 'Benefit record not found' });
 

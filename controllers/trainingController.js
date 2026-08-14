@@ -6,7 +6,11 @@ import { trainingEnrolled } from '../utils/emailTemplates.js';
 export const getTrainingCourses = async (req, res) => {
   try {
     const courses = await TrainingCourse.find({ tenantId: req.tenantId })
-      .populate('enrollments.employeeId', 'firstName lastName department positionId');
+      .populate({
+        path: 'enrollments.employeeId',
+        select: 'name role departmentId',
+        populate: { path: 'departmentId', select: 'name' }
+      });
       
     res.json({ success: true, data: courses });
   } catch (error) {
@@ -17,7 +21,11 @@ export const getTrainingCourses = async (req, res) => {
 export const createTrainingCourse = async (req, res) => {
   try {
     const { title, description, type, isMandatory, provider, durationHours, cost } = req.body;
-    
+
+    const existing = await TrainingCourse.findOne({ tenantId: req.tenantId, title: title?.trim() });
+    if (existing)
+      return res.status(409).json({ success: false, message: 'A course with this title already exists.' });
+
     const newCourse = new TrainingCourse({
       tenantId: req.tenantId,
       title,

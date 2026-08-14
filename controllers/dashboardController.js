@@ -3,6 +3,80 @@ import Leave from '../models/Leave.js';
 import Payslip from '../models/Payslip.js';
 import Probation from '../models/Probation.js';
 import HelpdeskTicket from '../models/HelpdeskTicket.js';
+import Requisition from '../models/Requisition.js';
+import Onboarding from '../models/Onboarding.js';
+
+const fmtDate = (d) => d ? new Date(d).toLocaleDateString('en-NG', { day: 'numeric', month: 'short' }) : '—';
+
+// Builds the "Action Inbox": every record across existing modules that is
+// actually waiting on this HR admin, ranked by how long it's been waiting.
+const buildActionInbox = async (tid) => {
+  const now = Date.now();
+  const soon = new Date(now + 2 * 24 * 60 * 60 * 1000);
+
+  const [pendingLeaves, pendingRequisitions, probationsDue, onboardingRecords] = await Promise.all([
+    Leave.find({ tenantId: tid, status: 'Pending' }).populate('employeeId', 'name').sort({ createdAt: 1 }),
+    Requisition.find({ tenantId: tid, status: 'Pending' }).populate('employeeId', 'name').sort({ createdAt: 1 }),
+    Probation.find({
+      tenantId: tid, status: 'Active',
+      endDate: { $lte: new Date(now + 14 * 24 * 60 * 60 * 1000) },
+    }).populate('employeeId', 'name'),
+    Onboarding.find({ tenantId: tid, stage: { $ne: 'Completed' } }).populate('employeeId', 'name'),
+  ]);
+
+  const items = [];
+
+  pendingLeaves.forEach((l) => {
+    items.push({
+      type: 'leave',
+      id: l._id,
+      title: `${l.employeeId?.name || 'Employee'} — ${l.type} leave`,
+      subtitle: `${fmtDate(l.startDate)} – ${fmtDate(l.endDate)}`,
+      staleDays: Math.floor((now - new Date(l.createdAt)) / 86400000),
+      tab: 'leaves',
+    });
+  });
+
+  pendingRequisitions.forEach((r) => {
+    items.push({
+      type: 'requisition',
+      id: r._id,
+      title: `${r.employeeId?.name || 'Employee'} — requisition`,
+      subtitle: (r.description || '').slice(0, 60),
+      staleDays: Math.floor((now - new Date(r.createdAt)) / 86400000),
+      tab: 'requisitions',
+    });
+  });
+
+  probationsDue.forEach((p) => {
+    const daysLeft = Math.ceil((new Date(p.endDate) - now) / 86400000);
+    items.push({
+      type: 'probation',
+      id: p._id,
+      title: `${p.employeeId?.name || 'Employee'} — probation ending`,
+      subtitle: daysLeft <= 0 ? 'Ended — needs a decision' : `${daysLeft} day${daysLeft === 1 ? '' : 's'} left`,
+      staleDays: daysLeft <= 0 ? 999 : 0,
+      tab: 'probation',
+    });
+  });
+
+  onboardingRecords.forEach((o) => {
+    (o.tasks || []).forEach((t) => {
+      if (t.status !== 'Completed' && t.dueDate && new Date(t.dueDate) <= soon) {
+        items.push({
+          type: 'onboarding',
+          id: `${o._id}-${t._id}`,
+          title: `${o.employeeId?.name || 'Employee'} — ${t.title}`,
+          subtitle: `Due ${fmtDate(t.dueDate)}`,
+          staleDays: new Date(t.dueDate) < now ? 999 : 0,
+          tab: 'onboarding',
+        });
+      }
+    });
+  });
+
+  return items.sort((a, b) => b.staleDays - a.staleDays);
+};
 
 // GET /api/dashboard/stats
 // Returns different payloads depending on role
@@ -52,6 +126,7 @@ export const getDashboardStats = async (req, res) => {
       openTickets,
       activeEmployees,
       departmentBreakdown,
+      actionInbox,
     ] = await Promise.all([
       Employee.countDocuments({ tenantId: tid, status: { $ne: 'Offboarded' } }),
       Leave.countDocuments({ tenantId: tid, status: { $in: ['Manager Approved', 'HR Approved'] } }),
@@ -66,9 +141,12 @@ export const getDashboardStats = async (req, res) => {
       Employee.find({ tenantId: tid, status: { $in: ['Active', 'Onboarding'] } }).select('salary'),
       Employee.aggregate([
         { $match: { tenantId: tid, status: { $ne: 'Offboarded' } } },
-        { $group: { _id: '$department', count: { $sum: 1 } } },
+        { $lookup: { from: 'departments', localField: 'departmentId', foreignField: '_id', as: 'dept' } },
+        { $unwind: { path: '$dept', preserveNullAndEmptyArrays: true } },
+        { $group: { _id: '$dept.name', count: { $sum: 1 } } },
         { $sort: { count: -1 } },
       ]),
+      buildActionInbox(tid),
     ]);
 
     const monthlyPayroll = activeEmployees.reduce((sum, e) => sum + (e.salary || 0), 0);
@@ -89,6 +167,7 @@ export const getDashboardStats = async (req, res) => {
           acc[d._id || 'Unknown'] = d.count;
           return acc;
         }, {}),
+        actionInbox,
       },
     });
   } catch (err) {

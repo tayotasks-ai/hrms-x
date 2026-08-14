@@ -20,16 +20,6 @@ const kpiSchema = new mongoose.Schema({
     type: String,
     trim: true
   },
-  targetValue: {
-    type: Number,
-    required: true,
-    min: 0
-  },
-  currentValue: {
-    type: Number,
-    default: 0,
-    min: 0
-  },
   cycleId: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'PerformanceCycle',
@@ -39,10 +29,37 @@ const kpiSchema = new mongoose.Schema({
     type: String,
     trim: true
   },
-  status: {
+  // Weight of this KPI within the employee's overall score for the cycle (%).
+  // Optional — KPIs without a weight are treated as equally-weighted in rollups.
+  weight: {
+    type: Number,
+    min: 0,
+    max: 100,
+    default: null
+  },
+  reviewStage: {
     type: String,
-    enum: ['Active', 'Achieved', 'Missed'],
-    default: 'Active'
+    enum: ['Pending Self-Review', 'Pending Manager-Review', 'Signed Off'],
+    default: 'Pending Self-Review'
+  },
+  selfRating: {
+    score: { type: Number, min: 1, max: 5 },
+    comment: { type: String, trim: true },
+    submittedAt: Date
+  },
+  managerRating: {
+    score: { type: Number, min: 1, max: 5 },
+    comment: { type: String, trim: true },
+    submittedAt: Date,
+    ratedBy: { type: mongoose.Schema.Types.ObjectId, refPath: 'managerRating.ratedByModel' },
+    ratedByModel: { type: String, enum: ['Employee', 'User'] }
+  },
+  // Set when manager-review is submitted — the score of record for rollups.
+  finalScore: {
+    type: Number,
+    min: 1,
+    max: 5,
+    default: null
   },
   createdAt: {
     type: Date,

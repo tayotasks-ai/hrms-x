@@ -5,7 +5,7 @@ export const getEmploymentHistories = async (req, res) => {
     const query = { tenantId: req.tenantId };
     if (req.userRole === 'Employee') query.employeeId = req.user._id;
     const records = await EmploymentHistory.find(query)
-      .populate('employeeId', 'name role department')
+      .populate({ path: 'employeeId', select: 'name role departmentId', populate: { path: 'departmentId', select: 'name' } })
       .sort({ createdAt: -1 });
     res.json({ success: true, data: records });
   } catch (err) { res.status(500).json({ success: false, message: err.message }); }

@@ -15,7 +15,7 @@ export const getLeaves = async (req, res) => {
     if (req.userRole === 'Employee') query.employeeId = req.user._id;
 
     const leaves = await Leave.find(query)
-      .populate('employeeId', 'name role department')
+      .populate({ path: 'employeeId', select: 'name role departmentId', populate: { path: 'departmentId', select: 'name' } })
       .populate('reliefOfficer', 'name')
       .sort({ createdAt: -1 });
 
@@ -56,7 +56,7 @@ export const createLeave = async (req, res) => {
     });
 
     const populated = await Leave.findById(leave._id)
-      .populate('employeeId', 'name role department')
+      .populate({ path: 'employeeId', select: 'name role departmentId', populate: { path: 'departmentId', select: 'name' } })
       .populate('reliefOfficer', 'name');
 
     // Fire-and-forget – notify HR admins
@@ -101,7 +101,7 @@ export const updateLeaveStatus = async (req, res) => {
     await leave.save();
 
     const populated = await Leave.findById(leave._id)
-      .populate('employeeId', 'name role department email')
+      .populate({ path: 'employeeId', select: 'name role departmentId email', populate: { path: 'departmentId', select: 'name' } })
       .populate('reliefOfficer', 'name');
 
     // Fire-and-forget – notify employee

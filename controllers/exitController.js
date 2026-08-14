@@ -6,7 +6,7 @@ import { exitInitiated } from '../utils/emailTemplates.js';
 export const getExitRecords = async (req, res) => {
   try {
     const records = await ExitRecord.find({ tenantId: req.tenantId })
-      .populate('employeeId', 'name role department email status')
+      .populate({ path: 'employeeId', select: 'name role departmentId email status', populate: { path: 'departmentId', select: 'name' } })
       .populate('clearanceChecklist.assignedTo', 'name')
       .sort({ createdAt: -1 });
     res.json({ success: true, data: records });
@@ -38,7 +38,7 @@ export const initiateExit = async (req, res) => {
     await Employee.findByIdAndUpdate(saved.employeeId, { status: 'Offboarding' });
 
     const populated = await ExitRecord.findById(saved._id)
-      .populate('employeeId', 'name role department email status')
+      .populate({ path: 'employeeId', select: 'name role departmentId email status', populate: { path: 'departmentId', select: 'name' } })
       .populate('clearanceChecklist.assignedTo', 'name');
 
     // Fire-and-forget – notify employee
@@ -88,7 +88,7 @@ export const updateClearanceTask = async (req, res) => {
     await record.save();
     
     const populated = await ExitRecord.findById(record._id)
-      .populate('employeeId', 'name role department email status')
+      .populate({ path: 'employeeId', select: 'name role departmentId email status', populate: { path: 'departmentId', select: 'name' } })
       .populate('clearanceChecklist.assignedTo', 'name');
 
     res.json({ success: true, data: populated });
@@ -103,7 +103,7 @@ export const completeExit = async (req, res) => {
       { _id: req.params.id, tenantId: req.tenantId },
       { status: 'Completed' },
       { new: true }
-    ).populate('employeeId', 'name role department email status');
+    ).populate({ path: 'employeeId', select: 'name role departmentId email status', populate: { path: 'departmentId', select: 'name' } });
 
     if (!record) return res.status(404).json({ success: false, message: 'Exit record not found' });
 

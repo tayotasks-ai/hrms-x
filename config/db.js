@@ -6,6 +6,7 @@ import Leave from '../models/Leave.js';
 import Payslip from '../models/Payslip.js';
 import Kpi from '../models/Kpi.js';
 import Department from '../models/Department.js';
+import PerformanceCycle from '../models/PerformanceCycle.js';
 
 const connectDB = async () => {
   try {
@@ -251,51 +252,93 @@ const seedDatabase = async () => {
 
     console.log('Created Default Payslips');
 
-    // 8. Create Default KPIs
+    // 8. Create Performance Cycles, then Default KPIs against them
+    const acmeCycle = await PerformanceCycle.create({
+      tenantId: acmeTenant._id,
+      name: 'Q2 2026 Performance Review',
+      startDate: new Date(currentYear, 3, 1),
+      endDate: new Date(currentYear, 5, 30),
+      status: 'Open'
+    });
+
+    const starkCycle = await PerformanceCycle.create({
+      tenantId: starkTenant._id,
+      name: 'H1 2026 Performance Review',
+      startDate: new Date(currentYear, 0, 1),
+      endDate: new Date(currentYear, 5, 30),
+      status: 'Open'
+    });
+
+    const now = new Date();
+
     await Kpi.create([
+      // John Doe (Acme) — two KPIs, one mid-review, one already signed off.
+      // Demonstrates a partially-complete cycle: overall rating reflects only what's signed off so far.
       {
         employeeId: johnDoe._id,
         tenantId: acmeTenant._id,
+        cycleId: acmeCycle._id,
         title: 'Optimize API Core Latency',
         description: 'Reduce backend endpoint average response times below 20ms.',
-        targetValue: 100,
-        currentValue: 85,
         period: 'Q2 2026',
-        status: 'Active'
+        weight: 60,
+        reviewStage: 'Pending Manager-Review',
+        selfRating: { score: 4, comment: 'Latency down from 45ms avg to 20ms, one more push planned before cycle close.', submittedAt: now }
       },
+      {
+        employeeId: johnDoe._id,
+        tenantId: acmeTenant._id,
+        cycleId: acmeCycle._id,
+        title: 'Ship Payment Retry Logic',
+        description: 'Add automatic retry with backoff for failed payment webhook deliveries.',
+        period: 'Q2 2026',
+        weight: 40,
+        reviewStage: 'Signed Off',
+        selfRating: { score: 4, comment: 'Shipped and tested against 3 failure scenarios.', submittedAt: now },
+        managerRating: { score: 5, comment: 'Clean implementation, zero incidents since launch.', submittedAt: now, ratedBy: janeSmith._id, ratedByModel: 'Employee' },
+        finalScore: 5
+      },
+      // Jane Smith (Acme) — fully signed off by HR (she has no manager).
       {
         employeeId: janeSmith._id,
         tenantId: acmeTenant._id,
+        cycleId: acmeCycle._id,
         title: 'Design Obsidian Layout System',
         description: 'Complete UI bento box styling grids and dark mode color scheme.',
-        targetValue: 100,
-        currentValue: 100,
         period: 'Q2 2026',
-        status: 'Achieved'
+        weight: 100,
+        reviewStage: 'Signed Off',
+        selfRating: { score: 5, comment: 'Delivered ahead of schedule with full dark-mode coverage.', submittedAt: now },
+        managerRating: { score: 5, comment: 'Exceptional execution, shipped ahead of schedule.', submittedAt: now, ratedBy: acmeAdmin._id, ratedByModel: 'User' },
+        finalScore: 5
       },
+      // Peter Parker (Stark) — untouched, default state: awaiting his own self-review.
       {
         employeeId: peterParker._id,
         tenantId: starkTenant._id,
+        cycleId: starkCycle._id,
         title: 'Oscorp Competitor Tech Review',
         description: 'Perform a detailed review of Oscorp tech products and scaffolding tools.',
-        targetValue: 10,
-        currentValue: 4,
-        period: 'Q2 2026',
-        status: 'Active'
+        period: 'H1 2026',
+        weight: 100
       },
+      // Happy Hogan (Stark) — fully signed off by his manager Bruce Banner.
       {
         employeeId: happyHogan._id,
         tenantId: starkTenant._id,
+        cycleId: starkCycle._id,
         title: 'Audit Avengers Security Logs',
         description: 'Review access logs for the main database servers.',
-        targetValue: 50,
-        currentValue: 50,
-        period: 'Q2 2026',
-        status: 'Achieved'
+        period: 'H1 2026',
+        weight: 100,
+        reviewStage: 'Signed Off',
+        selfRating: { score: 4, comment: 'Full audit complete, flagged two stale service accounts for rotation.', submittedAt: now },
+        managerRating: { score: 4, comment: 'Thorough work, follow-up items already assigned.', submittedAt: now, ratedBy: bruceBanner._id, ratedByModel: 'Employee' },
+        finalScore: 4
       }
     ]);
 
-    console.log('Created Default Employee KPIs');
+    console.log('Created Performance Cycles and Default Employee KPIs');
     console.log('Database seeding complete! 🎉');
   } catch (error) {
     console.error(`Database seeding failed: ${error.message}`);

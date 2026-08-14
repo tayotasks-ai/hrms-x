@@ -1,5 +1,6 @@
 import Redeployment from '../models/Redeployment.js';
 import Employee from '../models/Employee.js';
+import Department from '../models/Department.js';
 import { sendEmail } from '../utils/email.js';
 import { redeploymentInitiated, redeploymentCompleted } from '../utils/emailTemplates.js';
 
@@ -8,7 +9,7 @@ const fmtDate = (d) => d ? new Date(d).toLocaleDateString('en-NG', { day: 'numer
 export const getRedeployments = async (req, res) => {
   try {
     const records = await Redeployment.find({ tenantId: req.tenantId })
-      .populate('employeeId', 'name email status department role')
+      .populate('employeeId', 'name email status departmentId role')
       .populate('fromManager', 'name').populate('toManager', 'name')
       .sort({ createdAt: -1 });
     res.json({ success: true, data: records });
@@ -21,20 +22,20 @@ export const createRedeployment = async (req, res) => {
     const { employeeId, toDepartment, toRole, toLocation, effectiveDate } = req.body;
     if (!employeeId || !toDepartment || !toRole || !effectiveDate)
       return res.status(400).json({ success: false, message: 'employeeId, toDepartment, toRole, effectiveDate required.' });
-    const emp = await Employee.findOne({ _id: employeeId, tenantId: tid });
+    const emp = await Employee.findOne({ _id: employeeId, tenantId: tid }).populate('departmentId', 'name');
     if (!emp) return res.status(404).json({ success: false, message: 'Employee not found.' });
+    const fromDepartmentName = emp.departmentId?.name || 'Unassigned';
     const record = await Redeployment.create({
       ...req.body, tenantId: tid,
-      fromDepartment: emp.department,
+      fromDepartment: fromDepartmentName,
       fromRole: emp.role,
-      status: 'Pending',
     });
 
     // Fire-and-forget – notify employee
     if (emp.email) {
       const tpl = redeploymentInitiated({
         employeeName: emp.name,
-        fromDept: emp.department, toDept: toDepartment,
+        fromDept: fromDepartmentName, toDept: toDepartment,
         toRole, effectiveDate: fmtDate(effectiveDate),
       });
       sendEmail({ to: emp.email, ...tpl }).catch(err => console.error('Email failed:', err.message));
@@ -50,10 +51,11 @@ export const completeRedeployment = async (req, res) => {
     const record = await Redeployment.findOne({ _id: req.params.id, tenantId: tid });
     if (!record) return res.status(404).json({ success: false, message: 'Transfer not found.' });
     // Update employee record
-    await Employee.findByIdAndUpdate(record.employeeId, {
-      department: record.toDepartment,
-      role: record.toRole,
-    });
+    const toDept = await Department.findOne({ tenantId: tid, name: record.toDepartment });
+    const employeeUpdate = { role: record.toRole };
+    if (toDept) employeeUpdate.departmentId = toDept._id;
+    if (record.toManager) employeeUpdate.managerId = record.toManager;
+    await Employee.findByIdAndUpdate(record.employeeId, employeeUpdate);
     record.status = 'Completed';
     record.completedAt = new Date();
     await record.save();

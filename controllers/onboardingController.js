@@ -11,7 +11,7 @@ export const getOnboardings = async (req, res) => {
     if (req.userRole === 'Employee') query.employeeId = req.user._id;
 
     const records = await Onboarding.find(query)
-      .populate('employeeId', 'name role department email joinDate')
+      .populate({ path: 'employeeId', select: 'name role departmentId email joinDate', populate: { path: 'departmentId', select: 'name' } })
       .populate('tasks.assignedTo', 'name role')
       .sort({ createdAt: -1 });
 
@@ -41,7 +41,7 @@ export const createOnboarding = async (req, res) => {
     });
 
     const populated = await Onboarding.findById(record._id)
-      .populate('employeeId', 'name role department email joinDate')
+      .populate({ path: 'employeeId', select: 'name role departmentId email joinDate', populate: { path: 'departmentId', select: 'name' } })
       .populate('tasks.assignedTo', 'name role');
 
     // Fire-and-forget – notify employee
@@ -80,7 +80,7 @@ export const updateOnboardingTask = async (req, res) => {
     await record.save();
 
     const populated = await Onboarding.findById(record._id)
-      .populate('employeeId', 'name role department email joinDate')
+      .populate({ path: 'employeeId', select: 'name role departmentId email joinDate', populate: { path: 'departmentId', select: 'name' } })
       .populate('tasks.assignedTo', 'name role');
 
     res.json({ success: true, message: 'Task updated.', data: populated });
@@ -102,7 +102,7 @@ export const updateOnboardingStage = async (req, res) => {
       { _id: req.params.id, tenantId: tid },
       { stage },
       { new: true }
-    ).populate('employeeId', 'name role department email joinDate');
+    ).populate({ path: 'employeeId', select: 'name role departmentId email joinDate', populate: { path: 'departmentId', select: 'name' } });
 
     if (!record) return res.status(404).json({ success: false, message: 'Onboarding record not found.' });
     res.json({ success: true, message: 'Stage updated.', data: record });

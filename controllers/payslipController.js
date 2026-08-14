@@ -11,7 +11,7 @@ export const getPayslips = async (req, res) => {
     if (req.userRole === 'Employee') query.employeeId = req.user._id;
 
     const payslips = await Payslip.find(query)
-      .populate('employeeId', 'name role department email')
+      .populate({ path: 'employeeId', select: 'name role departmentId email', populate: { path: 'departmentId', select: 'name' } })
       .sort({ period: -1, createdAt: -1 });
 
     res.json({ success: true, data: payslips });
@@ -44,7 +44,7 @@ export const createPayslip = async (req, res) => {
     });
 
     const populated = await Payslip.findById(payslip._id)
-      .populate('employeeId', 'name role department email');
+      .populate({ path: 'employeeId', select: 'name role departmentId email', populate: { path: 'departmentId', select: 'name' } });
 
     // Fire-and-forget – notify employee
     if (emp.email) {

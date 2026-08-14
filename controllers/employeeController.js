@@ -1,7 +1,32 @@
 import Employee from '../models/Employee.js';
 import Tenant from '../models/Tenant.js';
+import Onboarding from '../models/Onboarding.js';
 import { sendEmail } from '../utils/email.js';
 import { employeeCreated } from '../utils/emailTemplates.js';
+
+// Ensures an employee marked 'Onboarding' has a matching Onboarding record,
+// so they actually show up in the Onboarding menu.
+const ensureOnboardingRecord = async (employeeId, tenantId) => {
+  const existing = await Onboarding.findOne({ employeeId, tenantId });
+  if (existing) return;
+  await Onboarding.create({ employeeId, tenantId, stage: 'Pre-boarding', tasks: [] });
+};
+
+// GET /api/employees/directory-lite
+// Non-sensitive name/role/department for every active employee, company-wide.
+// Used for pickers (e.g. Shoutouts) where the full privacy-scoped employee
+// record from getEmployees is unnecessary and too restrictive.
+export const getDirectoryLite = async (req, res) => {
+  try {
+    const employees = await Employee.find({ tenantId: req.tenantId, status: { $ne: 'Offboarded' } })
+      .select('name role departmentId')
+      .populate('departmentId', 'name')
+      .sort({ name: 1 });
+    res.json({ success: true, data: employees });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+};
 
 // GET /api/employees
 export const getEmployees = async (req, res) => {
@@ -86,6 +111,11 @@ export const createEmployee = async (req, res) => {
 
     const empData = { ...req.body, tenantId: tid, password: rawPassword };
     const emp = await Employee.create(empData);
+
+    if (emp.status === 'Onboarding') {
+      await ensureOnboardingRecord(emp._id, tid);
+    }
+
     const result = emp.toObject();
     delete result.password;
 
@@ -134,6 +164,10 @@ export const updateEmployee = async (req, res) => {
 
     Object.assign(emp, updates);
     await emp.save();
+
+    if (emp.status === 'Onboarding') {
+      await ensureOnboardingRecord(emp._id, tid);
+    }
 
     const populatedEmp = await Employee.findById(emp._id)
       .populate('departmentId', 'name description')

@@ -11,7 +11,7 @@ export const getProbations = async (req, res) => {
     if (req.userRole === 'Employee') query.employeeId = req.user._id;
 
     const records = await Probation.find(query)
-      .populate('employeeId', 'name role department email joinDate')
+      .populate({ path: 'employeeId', select: 'name role departmentId email joinDate', populate: { path: 'departmentId', select: 'name' } })
       .populate('outcomes.decidedBy', 'name')
       .sort({ endDate: 1 });
 
@@ -46,7 +46,7 @@ export const createProbation = async (req, res) => {
     if (existing) return res.status(409).json({ success: false, message: 'Active probation already exists for this employee.' });
 
     const record = await Probation.create({ employeeId, tenantId: tid, startDate, endDate });
-    const populated = await Probation.findById(record._id).populate('employeeId', 'name role department email joinDate');
+    const populated = await Probation.findById(record._id).populate({ path: 'employeeId', select: 'name role departmentId email joinDate', populate: { path: 'departmentId', select: 'name' } });
     res.status(201).json({ success: true, message: 'Probation created.', data: populated });
   } catch (err) {
     res.status(500).json({ success: false, message: err.message });
@@ -79,7 +79,7 @@ export const recordOutcome = async (req, res) => {
     record.outcomes.push({ decision, reason, newEndDate: newEndDate ? new Date(newEndDate) : undefined, decidedBy: req.user._id });
     await record.save();
 
-    const populated = await Probation.findById(record._id).populate('employeeId', 'name role department email joinDate');
+    const populated = await Probation.findById(record._id).populate({ path: 'employeeId', select: 'name role departmentId email joinDate', populate: { path: 'departmentId', select: 'name' } });
 
     // Fire-and-forget – notify employee
     if (populated.employeeId?.email) {

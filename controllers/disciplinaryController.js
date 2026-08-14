@@ -6,7 +6,7 @@ import { disciplinaryQueryIssued } from '../utils/emailTemplates.js';
 export const getCases = async (req, res) => {
   try {
     const cases = await DisciplinaryCase.find({ tenantId: req.tenantId })
-      .populate('reportedEmployee', 'name role department email status')
+      .populate({ path: 'reportedEmployee', select: 'name role departmentId email status', populate: { path: 'departmentId', select: 'name' } })
       .populate('reporter', 'name role')
       .populate('investigatingOfficer', 'name role')
       .populate('panelMembers', 'name role')
@@ -39,7 +39,7 @@ export const createCase = async (req, res) => {
     const saved = await newCase.save();
     
     const populated = await DisciplinaryCase.findById(saved._id)
-      .populate('reportedEmployee', 'name role department')
+      .populate({ path: 'reportedEmployee', select: 'name role departmentId', populate: { path: 'departmentId', select: 'name' } })
       .populate('reporter', 'name')
       .populate('history.performedBy', 'name');
       
@@ -108,7 +108,7 @@ export const addAction = async (req, res) => {
     await caseRecord.save();
     
     const populated = await DisciplinaryCase.findById(caseRecord._id)
-      .populate('reportedEmployee', 'name role department email status')
+      .populate({ path: 'reportedEmployee', select: 'name role departmentId email status', populate: { path: 'departmentId', select: 'name' } })
       .populate('reporter', 'name role')
       .populate('investigatingOfficer', 'name role')
       .populate('panelMembers', 'name role')
