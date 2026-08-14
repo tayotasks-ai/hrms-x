@@ -4,7 +4,7 @@ import { protect, hrOnly } from '../middleware/authMiddleware.js';
 // Controllers
 import { getTenants, createTenant } from '../controllers/tenantController.js';
 import { getDepartments, createDepartment, updateDepartment, deleteDepartment } from '../controllers/departmentController.js';
-import { loginUser } from '../controllers/authController.js';
+import { loginUser, changePassword, forgotPassword, resetPassword } from '../controllers/authController.js';
 import { getDashboardStats } from '../controllers/dashboardController.js';
 import { getEmployees, getEmployee, createEmployee, bulkCreateEmployees, updateEmployee, getMe, updateEmployeeManager, getDirectoryLite } from '../controllers/employeeController.js';
 import { getLeaves, createLeave, updateLeaveStatus } from '../controllers/leaveController.js';
@@ -28,6 +28,7 @@ import { getInternalJobs, createInternalJob, applyForJob, referCandidate } from 
 import { getTrainingCourses, createTrainingCourse, enrollEmployee, updateEnrollmentStatus } from '../controllers/trainingController.js';
 import { getShoutouts, createShoutout, reactToShoutout } from '../controllers/shoutoutController.js';
 import { clockIn, clockOut, getMyAttendance, getTodayAttendance } from '../controllers/attendanceController.js';
+import { getAuditLog } from '../controllers/auditLogController.js';
 
 const router = express.Router();
 
@@ -36,12 +37,17 @@ router.get('/health', (req, res) => res.json({ success: true, status: 'ok', mess
 router.get('/tenants', getTenants);
 router.post('/tenants', createTenant);
 router.post('/auth/login', loginUser);
+router.post('/auth/forgot-password', forgotPassword);
+router.post('/auth/reset-password', resetPassword);
 
 // ── All authenticated routes require protect middleware ────────────────────────
 router.use(protect);
 
 // Dashboard
 router.get('/dashboard/stats', getDashboardStats);
+
+// Auth (authenticated)
+router.put('/auth/change-password', changePassword);
 
 // Shoutouts
 router.get('/shoutouts', getShoutouts);
@@ -53,6 +59,9 @@ router.get('/attendance/me', getMyAttendance);
 router.post('/attendance/clock-in', clockIn);
 router.post('/attendance/clock-out', clockOut);
 router.get('/attendance/today', hrOnly, getTodayAttendance);
+
+// Audit Log
+router.get('/audit-log', hrOnly, getAuditLog);
 
 // Employees
 router.get('/employees/me', getMe);

@@ -79,6 +79,8 @@ const employeeSchema = new mongoose.Schema({
   // Authentication
   password: { type: String },
   isDefaultPassword: { type: Boolean, default: true },
+  resetPasswordToken: { type: String, select: false },
+  resetPasswordExpires: { type: Date, select: false },
   
   createdAt: { type: Date, default: Date.now }
 });

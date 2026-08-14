@@ -1,7 +1,7 @@
 import mongoose from 'mongoose';
 
 // Paths that bypass tenant scoping (public endpoints)
-const BYPASS = new Set(['/api/health', '/api/tenants', '/api/auth/login']);
+const BYPASS = new Set(['/api/health', '/api/tenants', '/api/auth/login', '/api/auth/forgot-password', '/api/auth/reset-password']);
 
 const tenantMiddleware = (req, res, next) => {
   if (BYPASS.has(req.path)) return next();

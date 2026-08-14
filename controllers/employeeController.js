@@ -4,6 +4,11 @@ import Onboarding from '../models/Onboarding.js';
 import Department from '../models/Department.js';
 import { sendEmail } from '../utils/email.js';
 import { employeeCreated } from '../utils/emailTemplates.js';
+import { recordAudit } from '../utils/auditLog.js';
+
+// Fields sensitive enough to warrant an audit trail entry when HR changes them.
+const AUDITED_FIELDS = ['salary', 'status', 'role', 'departmentId', 'managerId'];
+const AUDIT_LABELS = { salary: 'Salary', status: 'Status', role: 'Role', departmentId: 'Department', managerId: 'Manager' };
 
 const escapeRegex = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
@@ -253,11 +258,51 @@ export const updateEmployee = async (req, res) => {
       delete updates.password;
     }
 
+    // Snapshot the audited fields before applying updates so we can diff after save.
+    const before = {};
+    for (const f of AUDITED_FIELDS) before[f] = emp[f];
+
     Object.assign(emp, updates);
     await emp.save();
 
     if (emp.status === 'Onboarding') {
       await ensureOnboardingRecord(emp._id, tid);
+    }
+
+    // Build the audit diff. Employee self-edits never reach salary/status/
+    // role/departmentId/managerId (stripped above), so this only fires for
+    // HR-driven changes, but the check is harmless either way.
+    const rawChanges = AUDITED_FIELDS
+      .filter((f) => (before[f]?.toString?.() ?? before[f]) !== (emp[f]?.toString?.() ?? emp[f]))
+      .map((f) => ({ field: f, from: before[f], to: emp[f] }));
+
+    if (rawChanges.length > 0) {
+      const resolved = await Promise.all(rawChanges.map(async (c) => {
+        if (c.field === 'departmentId') {
+          const [fromDept, toDept] = await Promise.all([
+            c.from ? Department.findById(c.from).select('name').lean() : null,
+            c.to ? Department.findById(c.to).select('name').lean() : null,
+          ]);
+          return { field: AUDIT_LABELS.departmentId, from: fromDept?.name || '—', to: toDept?.name || '—' };
+        }
+        if (c.field === 'managerId') {
+          const [fromMgr, toMgr] = await Promise.all([
+            c.from ? Employee.findById(c.from).select('name').lean() : null,
+            c.to ? Employee.findById(c.to).select('name').lean() : null,
+          ]);
+          return { field: AUDIT_LABELS.managerId, from: fromMgr?.name || 'None', to: toMgr?.name || 'None' };
+        }
+        return { field: AUDIT_LABELS[c.field] || c.field, from: c.from ?? '—', to: c.to ?? '—' };
+      }));
+
+      recordAudit({
+        tenantId: tid,
+        actor: { id: req.user._id, name: req.user.name, model: isEmployee ? 'Employee' : 'User' },
+        targetType: 'Employee',
+        targetId: emp._id,
+        targetName: emp.name,
+        changes: resolved,
+      });
     }
 
     const populatedEmp = await Employee.findById(emp._id)

@@ -28,6 +28,8 @@ const userSchema = new mongoose.Schema({
     ref: 'Tenant',
     required: true
   },
+  resetPasswordToken: { type: String, select: false },
+  resetPasswordExpires: { type: Date, select: false },
   createdAt: {
     type: Date,
     default: Date.now

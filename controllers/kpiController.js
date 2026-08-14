@@ -1,6 +1,26 @@
 import Kpi from '../models/Kpi.js';
 import Employee from '../models/Employee.js';
 import PerformanceCycle from '../models/PerformanceCycle.js';
+import User from '../models/User.js';
+import { sendEmail } from '../utils/email.js';
+import { kpiSelfReviewSubmitted, kpiSignedOff } from '../utils/emailTemplates.js';
+
+// Notify whoever needs to act next on a KPI review. Falls back to notifying
+// every HR Admin for the tenant when the employee has no manager set (e.g.
+// department heads), since submitManagerReview already lets HR sign off in
+// that case.
+const notifyNextReviewer = async (tid, employee, tpl) => {
+  if (employee?.managerId) {
+    const manager = await Employee.findOne({ _id: employee.managerId, tenantId: tid });
+    if (manager?.email) {
+      return sendEmail({ to: manager.email, ...tpl(manager.name) }).catch(err => console.error('Email failed:', err.message));
+    }
+  }
+  const hrAdmins = await User.find({ tenantId: tid, role: 'HR_Admin' }).select('name email');
+  await Promise.all(
+    hrAdmins.filter(a => a.email).map(a => sendEmail({ to: a.email, ...tpl(a.name) }).catch(err => console.error('Email failed:', err.message)))
+  );
+};
 
 // GET /api/kpis
 export const getKpis = async (req, res) => {
@@ -92,6 +112,15 @@ export const submitSelfReview = async (req, res) => {
     const populated = await Kpi.findById(kpi._id)
       .populate({ path: 'employeeId', select: 'name role departmentId managerId', populate: { path: 'departmentId', select: 'name' } })
       .populate('cycleId', 'name status');
+
+    // Fire-and-forget – tell whoever needs to sign this off
+    notifyNextReviewer(tid, populated.employeeId, (recipientName) => kpiSelfReviewSubmitted({
+      managerName: recipientName,
+      employeeName: populated.employeeId?.name || 'An employee',
+      kpiTitle: populated.title,
+      score,
+    })).catch(err => console.error('KPI notify failed:', err.message));
+
     res.json({ success: true, message: 'Self-review submitted.', data: populated });
   } catch (err) {
     res.status(500).json({ success: false, message: err.message });
@@ -128,8 +157,19 @@ export const submitManagerReview = async (req, res) => {
     await kpi.save();
 
     const populated = await Kpi.findById(kpi._id)
-      .populate({ path: 'employeeId', select: 'name role departmentId managerId', populate: { path: 'departmentId', select: 'name' } })
+      .populate({ path: 'employeeId', select: 'name role departmentId managerId email', populate: { path: 'departmentId', select: 'name' } })
       .populate('cycleId', 'name status');
+
+    // Fire-and-forget – let the employee know their KPI was signed off
+    if (populated.employeeId?.email) {
+      const tpl = kpiSignedOff({
+        employeeName: populated.employeeId.name,
+        kpiTitle: populated.title,
+        finalScore: score,
+      });
+      sendEmail({ to: populated.employeeId.email, ...tpl }).catch(err => console.error('Email failed:', err.message));
+    }
+
     res.json({ success: true, message: 'Manager review submitted. KPI signed off.', data: populated });
   } catch (err) {
     res.status(500).json({ success: false, message: err.message });

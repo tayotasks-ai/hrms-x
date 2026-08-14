@@ -277,3 +277,49 @@ export const trainingEnrolled = ({ employeeName, courseTitle, courseType, durati
     </table>
   `)
 });
+
+// ─── 15. Password Reset Requested ───────────────────────────────────────────
+export const passwordResetRequested = ({ name, resetUrl }) => ({
+  subject: `Reset your HRMS-X password`,
+  html: wrap(`
+    ${heading('Reset Your Password 🔒')}
+    ${para(`Hi <strong>${name}</strong>,`)}
+    ${para('We received a request to reset your HRMS-X password. Click the button below to choose a new one. This link expires in 30 minutes.')}
+    <div style="text-align:center;">
+      ${btn('Reset Password', resetUrl)}
+    </div>
+    ${divider()}
+    ${para("If you didn't request this, you can safely ignore this email — your password won't be changed.")}
+  `)
+});
+
+// ─── 16. KPI Self-Review Submitted (sent to manager) ───────────────────────
+export const kpiSelfReviewSubmitted = ({ managerName, employeeName, kpiTitle, score }) => ({
+  subject: `KPI Self-Review Submitted – ${employeeName}`,
+  html: wrap(`
+    ${heading('Manager Review Needed 📝')}
+    ${para(`Hi <strong>${managerName}</strong>,`)}
+    ${para(`<strong>${employeeName}</strong> submitted a self-review and it's waiting on your sign-off.`)}
+    ${divider()}
+    <table style="width:100%;font-size:14px;color:#4b5563;">
+      <tr><td style="padding:6px 0;font-weight:600;">KPI</td><td>${kpiTitle}</td></tr>
+      <tr><td style="padding:6px 0;font-weight:600;">Self-Rating</td><td>${score}/5</td></tr>
+    </table>
+    ${divider()}
+    ${para('Log in to your HRMS-X portal to submit the manager review.')}
+  `)
+});
+
+// ─── 17. KPI Manager Review Signed Off (sent to employee) ───────────────────
+export const kpiSignedOff = ({ employeeName, kpiTitle, finalScore }) => ({
+  subject: `KPI Signed Off – ${kpiTitle}`,
+  html: wrap(`
+    ${heading('KPI Signed Off ✅')}
+    ${para(`Hi <strong>${employeeName}</strong>,`)}
+    ${para(`Your manager has completed the review for <strong>${kpiTitle}</strong>.`)}
+    <div style="text-align:center;margin:20px 0;">
+      ${badge(`Final Score: ${finalScore}/5`, '#16a34a')}
+    </div>
+    ${para('Log in to your HRMS-X portal to see the full review.')}
+  `)
+});
