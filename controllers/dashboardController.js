@@ -119,29 +119,38 @@ export const getDashboardStats = async (req, res) => {
       const yearStart = new Date(Date.UTC(currentYear, 0, 1));
       const yearEnd = new Date(Date.UTC(currentYear, 11, 31, 23, 59, 59, 999));
 
-      const [myLeaves, myPayslips, myProbation, myTickets, tenant, annualLeavesThisYear] = await Promise.all([
+      const [myLeaves, myPayslips, myProbation, myTickets, tenant, leavesThisYear] = await Promise.all([
         Leave.find({ tenantId: tid, employeeId: empId }).sort({ createdAt: -1 }).limit(5),
         Payslip.find({ tenantId: tid, employeeId: empId }).sort({ period: -1 }).limit(1),
         Probation.findOne({ tenantId: tid, employeeId: empId, status: 'Active' }),
         HelpdeskTicket.countDocuments({ tenantId: tid, employeeId: empId, status: { $in: ['Open', 'In Progress'] } }),
         Tenant.findById(tid).select('leavePolicy'),
-        // Mirrors leaveController.daysUsedInYear: anything not Rejected counts
-        // (Pending included, so a stacked request can't hide used days).
+        // One query for every type this year, then grouped in JS below —
+        // mirrors leaveController.daysUsedInYear: anything not Rejected
+        // counts (Pending included, so a stacked request can't hide used days).
         Leave.find({
-          tenantId: tid, employeeId: empId, type: 'Annual',
+          tenantId: tid, employeeId: empId,
           status: { $ne: 'Rejected' },
           startDate: { $gte: yearStart, $lte: yearEnd },
-        }).select('workingDays'),
+        }).select('type workingDays'),
       ]);
 
       const pendingLeaves = myLeaves.filter(l => l.status === 'Pending').length;
       const approvedLeaves = myLeaves.filter(l => ['HR Approved', 'Manager Approved'].includes(l.status)).length;
 
-      const annualEntitlement = tenant?.leavePolicy?.Annual ?? 0;
-      const annualDaysUsed = annualLeavesThisYear.reduce((sum, l) => sum + (l.workingDays || 0), 0);
-      const annualLeaveBalance = annualEntitlement > 0
-        ? { entitlement: annualEntitlement, used: annualDaysUsed, remaining: Math.max(annualEntitlement - annualDaysUsed, 0), uncapped: false }
-        : { entitlement: annualEntitlement, used: annualDaysUsed, remaining: null, uncapped: true };
+      const usedByType = {};
+      leavesThisYear.forEach(l => { usedByType[l.type] = (usedByType[l.type] || 0) + (l.workingDays || 0); });
+
+      // Fixed order matching the Tenant schema's leavePolicy fields, so the
+      // dashboard list renders in a stable, sensible order every time.
+      const LEAVE_TYPES = ['Annual', 'Sick', 'Maternity', 'Paternity', 'Compassionate', 'Study', 'Unpaid', 'Emergency'];
+      const leaveBalances = LEAVE_TYPES.map((type) => {
+        const entitlement = tenant?.leavePolicy?.[type] ?? 0;
+        const used = usedByType[type] || 0;
+        return entitlement > 0
+          ? { type, entitlement, used, remaining: Math.max(entitlement - used, 0), uncapped: false }
+          : { type, entitlement, used, remaining: null, uncapped: true };
+      });
 
       return res.json({
         success: true,
@@ -153,7 +162,7 @@ export const getDashboardStats = async (req, res) => {
           openTickets: myTickets,
           pendingLeaves,
           approvedLeaves,
-          annualLeaveBalance,
+          leaveBalances,
         },
       });
     }
