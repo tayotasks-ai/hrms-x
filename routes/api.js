@@ -38,6 +38,7 @@ import { handlePaystackWebhook } from '../controllers/webhookController.js';
 import { getNotifications, markNotificationRead, markAllNotificationsRead } from '../controllers/notificationController.js';
 import { exportMyData, createDsarRequest, getDsarRequests, updateDsarRequest } from '../controllers/dsarController.js';
 import { getRetentionSettings, updateRetentionSettings, getRetentionCandidates, anonymizeEmployee } from '../controllers/retentionController.js';
+import { pingActivity, getMyActivity, getTeamActivity } from '../controllers/activityController.js';
 
 const router = express.Router();
 
@@ -75,6 +76,11 @@ router.get('/attendance/today', hrOnly, getTodayAttendance);
 
 // Audit Log
 router.get('/audit-log', hrOnly, getAuditLog);
+
+// Activity (in-app active-time tracking)
+router.post('/activity/ping', pingActivity);
+router.get('/activity/me', getMyActivity);
+router.get('/activity/team', hrOnly, getTeamActivity);
 
 // Notifications
 router.get('/notifications', getNotifications);
