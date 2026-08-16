@@ -5,6 +5,7 @@ import Probation from '../models/Probation.js';
 import HelpdeskTicket from '../models/HelpdeskTicket.js';
 import Requisition from '../models/Requisition.js';
 import Onboarding from '../models/Onboarding.js';
+import Tenant from '../models/Tenant.js';
 
 const fmtDate = (d) => d ? new Date(d).toLocaleDateString('en-NG', { day: 'numeric', month: 'short' }) : '—';
 
@@ -114,16 +115,33 @@ export const getDashboardStats = async (req, res) => {
     if (req.userRole === 'Employee') {
       // ── ESS dashboard data ─────────────────────────────────────────────────
       const empId = req.user._id;
+      const currentYear = new Date().getUTCFullYear();
+      const yearStart = new Date(Date.UTC(currentYear, 0, 1));
+      const yearEnd = new Date(Date.UTC(currentYear, 11, 31, 23, 59, 59, 999));
 
-      const [myLeaves, myPayslips, myProbation, myTickets] = await Promise.all([
+      const [myLeaves, myPayslips, myProbation, myTickets, tenant, annualLeavesThisYear] = await Promise.all([
         Leave.find({ tenantId: tid, employeeId: empId }).sort({ createdAt: -1 }).limit(5),
         Payslip.find({ tenantId: tid, employeeId: empId }).sort({ period: -1 }).limit(1),
         Probation.findOne({ tenantId: tid, employeeId: empId, status: 'Active' }),
         HelpdeskTicket.countDocuments({ tenantId: tid, employeeId: empId, status: { $in: ['Open', 'In Progress'] } }),
+        Tenant.findById(tid).select('leavePolicy'),
+        // Mirrors leaveController.daysUsedInYear: anything not Rejected counts
+        // (Pending included, so a stacked request can't hide used days).
+        Leave.find({
+          tenantId: tid, employeeId: empId, type: 'Annual',
+          status: { $ne: 'Rejected' },
+          startDate: { $gte: yearStart, $lte: yearEnd },
+        }).select('workingDays'),
       ]);
 
       const pendingLeaves = myLeaves.filter(l => l.status === 'Pending').length;
       const approvedLeaves = myLeaves.filter(l => ['HR Approved', 'Manager Approved'].includes(l.status)).length;
+
+      const annualEntitlement = tenant?.leavePolicy?.Annual ?? 0;
+      const annualDaysUsed = annualLeavesThisYear.reduce((sum, l) => sum + (l.workingDays || 0), 0);
+      const annualLeaveBalance = annualEntitlement > 0
+        ? { entitlement: annualEntitlement, used: annualDaysUsed, remaining: Math.max(annualEntitlement - annualDaysUsed, 0), uncapped: false }
+        : { entitlement: annualEntitlement, used: annualDaysUsed, remaining: null, uncapped: true };
 
       return res.json({
         success: true,
@@ -135,6 +153,7 @@ export const getDashboardStats = async (req, res) => {
           openTickets: myTickets,
           pendingLeaves,
           approvedLeaves,
+          annualLeaveBalance,
         },
       });
     }
