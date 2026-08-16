@@ -34,7 +34,11 @@ app.use(cors());
 // order, spacing) and silently break signature verification. Only the
 // webhook route uses req.rawBody — everything else uses the parsed req.body
 // as before.
-app.use(express.json({ verify: (req, res, buf) => { req.rawBody = buf; } }));
+// Raised from Express's 100kb default to accommodate base64-encoded
+// screenshot uploads from the desktop agent (see monitoringController.js —
+// the controller itself separately caps the actual image size well under
+// this, this just needs to be large enough for the base64 overhead on top).
+app.use(express.json({ limit: '8mb', verify: (req, res, buf) => { req.rawBody = buf; } }));
 
 // Enforce Multi-Tenant isolation middleware on all routes
 app.use(tenantMiddleware);

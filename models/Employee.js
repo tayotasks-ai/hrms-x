@@ -123,6 +123,19 @@ const employeeSchema = new mongoose.Schema({
     version: String,
   },
 
+  // Separate, narrower consent specifically for desktop-agent screenshot
+  // capture — deliberately NOT folded into privacyConsent above. General
+  // privacy consent covers routine HR data processing; screenshots are a
+  // materially more invasive category and must be opted into on their own,
+  // inside the agent itself, even after the tenant has enabled the feature
+  // (Tenant.monitoring.screenshotsEnabled). See monitoringController.js —
+  // uploadScreenshot() hard-checks both flags before accepting an upload.
+  monitoringConsent: {
+    accepted: { type: Boolean, default: false },
+    acceptedAt: Date,
+    version: String,
+  },
+
   createdAt: { type: Date, default: Date.now }
 });
 

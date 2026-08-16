@@ -124,6 +124,7 @@ export const loginUser = async (req, res) => {
             isDefaultPassword: emp.isDefaultPassword,
             twoFactorEnabled: emp.twoFactorEnabled,
             privacyConsent: emp.privacyConsent,
+            monitoringConsent: emp.monitoringConsent,
             tenant: emp.tenantId,
             token: generateToken(emp._id),
           },
@@ -179,6 +180,7 @@ export const verifyLoginOtp = async (req, res) => {
         _id: emp._id, name: emp.name, email: emp.email, role: 'Employee',
         department: emp.department, isDefaultPassword: emp.isDefaultPassword, twoFactorEnabled: emp.twoFactorEnabled,
         privacyConsent: emp.privacyConsent,
+        monitoringConsent: emp.monitoringConsent,
         tenant: emp.tenantId, token: generateToken(emp._id),
       },
     });

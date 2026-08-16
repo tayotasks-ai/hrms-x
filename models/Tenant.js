@@ -54,6 +54,18 @@ const tenantSchema = new mongoose.Schema({
   dataRetention: {
     offboardedRetentionYears: { type: Number, default: 6, min: 1 },
   },
+  // Desktop-agent monitoring (see backend/controllers/monitoringController.js
+  // and /desktop-agent). Screenshot capture is OFF by default — HR has to
+  // explicitly turn it on here, and even then each individual employee must
+  // separately consent inside the agent before any screenshot is captured
+  // for them (see Employee.monitoringConsent). This flag has no effect on
+  // the in-app active-time tracking (Tenant has no switch for that — it's
+  // always-on, low-sensitivity, and disclosed in the general privacy
+  // notice), only on screenshots specifically.
+  monitoring: {
+    screenshotsEnabled: { type: Boolean, default: false },
+    screenshotIntervalMinutes: { type: Number, default: 30, min: 5 },
+  },
   createdAt: {
     type: Date,
     default: Date.now

@@ -39,6 +39,7 @@ import { getNotifications, markNotificationRead, markAllNotificationsRead } from
 import { exportMyData, createDsarRequest, getDsarRequests, updateDsarRequest } from '../controllers/dsarController.js';
 import { getRetentionSettings, updateRetentionSettings, getRetentionCandidates, anonymizeEmployee } from '../controllers/retentionController.js';
 import { pingActivity, getMyActivity, getTeamActivity } from '../controllers/activityController.js';
+import { getMonitoringSettings, updateMonitoringSettings, setMonitoringConsent, uploadScreenshot, getScreenshots, getScreenshotImage, deleteScreenshot } from '../controllers/monitoringController.js';
 
 const router = express.Router();
 
@@ -81,6 +82,15 @@ router.get('/audit-log', hrOnly, getAuditLog);
 router.post('/activity/ping', pingActivity);
 router.get('/activity/me', getMyActivity);
 router.get('/activity/team', hrOnly, getTeamActivity);
+
+// Monitoring (desktop agent — optional screenshot capture, off by default)
+router.get('/monitoring/settings', hrOnly, getMonitoringSettings);
+router.put('/monitoring/settings', hrOnly, updateMonitoringSettings);
+router.put('/monitoring/consent', setMonitoringConsent);
+router.post('/monitoring/screenshot', uploadScreenshot);
+router.get('/monitoring/screenshots', hrOnly, getScreenshots);
+router.get('/monitoring/screenshots/:id/image', hrOnly, getScreenshotImage);
+router.delete('/monitoring/screenshots/:id', hrOnly, deleteScreenshot);
 
 // Notifications
 router.get('/notifications', getNotifications);
