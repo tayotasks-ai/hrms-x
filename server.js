@@ -19,6 +19,13 @@ dotenv.config({ path: path.resolve(__dirname, '.env') });
 const app = express();
 const PORT = process.env.PORT || 5001;
 
+// Render (and most PaaS hosts) sit the app behind a single reverse proxy that
+// sets X-Forwarded-For. Without this, express-rate-limit can't tell real
+// client IPs apart (everyone looks like the proxy's IP) and throws
+// ERR_ERL_UNEXPECTED_X_FORWARDED_FOR. `1` = trust exactly one hop in front
+// of us, which matches Render's setup.
+app.set('trust proxy', 1);
+
 // Middlewares
 app.use(cors());
 // `verify` captures the raw request body bytes onto req.rawBody. Paystack
