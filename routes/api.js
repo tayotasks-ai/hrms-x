@@ -30,7 +30,7 @@ import { getTrainingCourses, createTrainingCourse, enrollEmployee, updateEnrollm
 import { getShoutouts, createShoutout, reactToShoutout } from '../controllers/shoutoutController.js';
 import { clockIn, clockOut, getMyAttendance, getTodayAttendance } from '../controllers/attendanceController.js';
 import { getAuditLog } from '../controllers/auditLogController.js';
-import { getPaymentSettings, connectPaystack, disconnectPaystack, setDualApproval } from '../controllers/paymentSettingsController.js';
+import { getWallet, setupWallet, setWalletDualApproval, setPayrollSchedule, getWalletTransactions } from '../controllers/walletController.js';
 import { getBanks, verifyBankAccount } from '../controllers/bankController.js';
 import { payPayslip, payBatch, finalizePayslipPayment } from '../controllers/payslipPaymentController.js';
 import { getPayrollApprovals, approvePayrollApproval, rejectPayrollApproval } from '../controllers/payrollApprovalController.js';
@@ -97,11 +97,13 @@ router.get('/notifications', getNotifications);
 router.put('/notifications/:id/read', markNotificationRead);
 router.put('/notifications/read-all', markAllNotificationsRead);
 
-// Payment Settings (Paystack connection)
-router.get('/payment-settings', hrOnly, getPaymentSettings);
-router.post('/payment-settings/paystack/connect', hrOnly, connectPaystack);
-router.delete('/payment-settings/paystack', hrOnly, disconnectPaystack);
-router.put('/payment-settings/dual-approval', hrOnly, setDualApproval);
+// Payroll Wallet (platform-key model — replaces the old per-tenant "connect
+// your own Paystack key" flow)
+router.get('/wallet', hrOnly, getWallet);
+router.post('/wallet/setup', hrOnly, setupWallet);
+router.put('/wallet/dual-approval', hrOnly, setWalletDualApproval);
+router.put('/wallet/schedule', hrOnly, setPayrollSchedule);
+router.get('/wallet/transactions', hrOnly, getWalletTransactions);
 
 // Employees
 router.get('/employees/me', getMe);

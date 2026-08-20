@@ -3,8 +3,8 @@ import Payslip from '../models/Payslip.js';
 import Employee from '../models/Employee.js';
 import Tenant from '../models/Tenant.js';
 import PayrollApproval from '../models/PayrollApproval.js';
-import { getDecryptedPaystackKey } from './paymentSettingsController.js';
-import { initiateTransfer, finalizeTransfer, PaystackError } from '../utils/paystack.js';
+import WalletTransaction from '../models/WalletTransaction.js';
+import { getPlatformSecretKey, computeTransferFee, initiateTransfer, finalizeTransfer, PaystackError } from '../utils/paystack.js';
 import { recordAudit } from '../utils/auditLog.js';
 import { sendEmail } from '../utils/email.js';
 import { payslipAvailable } from '../utils/emailTemplates.js';
@@ -13,8 +13,8 @@ import User from '../models/User.js';
 
 // References are generated as hrms_<tenantId>_<payslipId>_<random> so the
 // PUBLIC webhook (which has no X-Tenant-ID header) can recover which
-// tenant's Paystack secret key to verify the signature against, purely from
-// the reference on the incoming event. See controllers/webhookController.js.
+// tenant/payslip an incoming event belongs to purely from the reference.
+// See controllers/webhookController.js.
 const makeReference = (tenantId, payslipId) =>
   `hrms_${tenantId}_${payslipId}_${crypto.randomBytes(4).toString('hex')}`;
 
@@ -26,10 +26,23 @@ const mapTransferStatus = (paystackStatus) => {
   return 'Processing'; // 'pending' or anything else in flight
 };
 
-// Runs the actual Paystack call for one payslip. Shared by the single-pay
-// and batch-pay endpoints. Mutates and saves the payslip; returns a plain
-// result object rather than throwing, so batch callers can collect
-// per-item outcomes the same way bulkCreateEmployees does for imports.
+// True unless the platform has confirmed Paystack "Registered Payroll"
+// stamp-duty exemption — see utils/paystack.js computeTransferFee.
+const stampDutyApplies = () => process.env.PAYSTACK_STAMP_DUTY_EXEMPT !== 'true';
+
+// Runs the actual Paystack call for one payslip. Shared by the single-pay,
+// batch-pay, and payroll-approval / scheduled-payday paths. Mutates and
+// saves the payslip; returns a plain result object rather than throwing, so
+// callers can collect per-item outcomes.
+//
+// Wallet accounting: the employee's net pay PLUS Paystack's own transfer
+// fee PLUS our flat markup is debited from the tenant's wallet ATOMICALLY
+// (a single conditional $inc — see below) before Paystack is ever called.
+// If the wallet can't cover it, we never call Paystack at all and return
+// `insufficientBalance: true` so batch/scheduled callers can tell that
+// apart from a "real" payment failure. If Paystack itself then rejects the
+// transfer outright, the debit is refunded immediately; if it's accepted
+// but fails later, the webhook (webhookController.js) does the refund.
 export const payOnePayslip = async (payslip, secretKey, tenantId, actor) => {
   if (['Processing', 'Pending_OTP', 'Paid'].includes(payslip.payment?.status)) {
     return { ok: false, payslipId: payslip._id, message: `Payment already ${payslip.payment.status}.` };
@@ -44,7 +57,41 @@ export const payOnePayslip = async (payslip, secretKey, tenantId, actor) => {
     return { ok: false, payslipId: payslip._id, message: 'Net pay must be greater than zero.' };
   }
 
+  const fee = computeTransferFee(payslip.netPay, { stampDutyApplies: stampDutyApplies() });
+  const totalDebit = payslip.netPay + fee.total;
   const reference = makeReference(tenantId, payslip._id);
+
+  // Atomic conditional debit — the $gte guard is what makes this safe
+  // against a concurrent "Pay Selected" batch or an overlapping scheduled
+  // run double-spending the same balance. If nothing matches, the wallet
+  // is short and we stop here without touching Paystack.
+  const debited = await Tenant.findOneAndUpdate(
+    { _id: tenantId, 'wallet.balance': { $gte: totalDebit } },
+    { $inc: { 'wallet.balance': -totalDebit } },
+    { new: true }
+  ).select('wallet.balance');
+
+  if (!debited) {
+    return {
+      ok: false,
+      payslipId: payslip._id,
+      insufficientBalance: true,
+      shortfall: totalDebit,
+      message: `Insufficient wallet balance for ${emp.name} — needs ₦${totalDebit.toLocaleString()} (₦${payslip.netPay.toLocaleString()} net pay + ₦${fee.total.toLocaleString()} fees).`,
+    };
+  }
+
+  await WalletTransaction.create({
+    tenantId,
+    type: 'Payroll_Debit',
+    amount: totalDebit,
+    balanceAfter: debited.wallet.balance,
+    reference,
+    status: 'Pending',
+    relatedPayslip: payslip._id,
+    meta: { netPay: payslip.netPay, ...fee },
+  });
+
   try {
     const result = await initiateTransfer(secretKey, {
       amountNaira: payslip.netPay,
@@ -61,6 +108,10 @@ export const payOnePayslip = async (payslip, secretKey, tenantId, actor) => {
     };
     await payslip.save();
 
+    if (payslip.payment.status === 'Paid') {
+      await WalletTransaction.updateOne({ reference, type: 'Payroll_Debit' }, { status: 'Success' });
+    }
+
     recordAudit({
       tenantId, actor,
       targetType: 'Payslip', targetId: payslip._id, targetName: `${emp.name} — ${payslip.period}`,
@@ -72,8 +123,29 @@ export const payOnePayslip = async (payslip, secretKey, tenantId, actor) => {
       sendEmail({ to: emp.email, ...tpl }).catch(err => console.error('Email failed:', err.message));
     }
 
-    return { ok: true, payslipId: payslip._id, status: payslip.payment.status, requiresOtp: payslip.payment.status === 'Pending_OTP' };
+    return { ok: true, payslipId: payslip._id, status: payslip.payment.status, requiresOtp: payslip.payment.status === 'Pending_OTP', debited: totalDebit };
   } catch (err) {
+    // Paystack rejected the transfer outright (not just "pending") — refund
+    // the wallet right away rather than waiting on a webhook that will
+    // never arrive for a request that never really started.
+    const refunded = await Tenant.findOneAndUpdate(
+      { _id: tenantId },
+      { $inc: { 'wallet.balance': totalDebit } },
+      { new: true }
+    ).select('wallet.balance');
+
+    await WalletTransaction.updateOne({ reference, type: 'Payroll_Debit' }, { status: 'Failed' });
+    await WalletTransaction.create({
+      tenantId,
+      type: 'Refund',
+      amount: totalDebit,
+      balanceAfter: refunded.wallet.balance,
+      reference,
+      status: 'Success',
+      relatedPayslip: payslip._id,
+      meta: { reason: 'Transfer initiation failed', error: err.message },
+    });
+
     payslip.payment = { ...(payslip.payment?.toObject?.() || {}), status: 'Failed', reference, failureReason: err.message };
     await payslip.save().catch(() => {});
     const message = err instanceof PaystackError ? err.message : err.message;
@@ -82,10 +154,12 @@ export const payOnePayslip = async (payslip, secretKey, tenantId, actor) => {
 };
 
 // Shared by payPayslip/payBatch when the tenant has maker-checker turned on
-// (Tenant.paystack.requireDualApproval). Instead of calling Paystack now,
+// (Tenant.wallet.requireDualApproval). Instead of calling Paystack now,
 // files a PayrollApproval request that a *different* HR_Admin must approve
 // from the Payroll Approvals queue — see payrollApprovalController.js,
 // which is the only place that ever actually calls payOnePayslip for these.
+// Wallet balance isn't checked here — it's checked atomically inside
+// payOnePayslip when the approval is actually acted on.
 const createApprovalRequest = async (tid, ids, actor) => {
   const payslips = await Payslip.find({ _id: { $in: ids }, tenantId: tid });
   const found = new Map(payslips.map(p => [p._id.toString(), p]));
@@ -125,6 +199,21 @@ const createApprovalRequest = async (tid, ids, actor) => {
   return { approval, skipped };
 };
 
+// Notifies HR once, summarizing every payslip a batch/scheduled run
+// couldn't pay because the wallet ran dry — "pay what it covers, skip the
+// rest" per the founders' decision on low-balance handling.
+const notifyInsufficientBalance = (tid, results) => {
+  const short = results.filter(r => r.insufficientBalance);
+  if (short.length === 0) return;
+  const totalShortfall = short.reduce((sum, r) => sum + (r.shortfall || 0), 0);
+  notifyHrAdmins(User, tid, {
+    type: 'wallet_insufficient_balance',
+    title: 'Payroll wallet ran out of balance',
+    message: `${short.length} payslip${short.length === 1 ? '' : 's'} could not be paid — the wallet is short by about ₦${totalShortfall.toLocaleString()}. Top up and re-run for the rest.`,
+    link: 'wallet',
+  });
+};
+
 // POST /api/payslips/:id/pay – HR only
 export const payPayslip = async (req, res) => {
   try {
@@ -133,18 +222,21 @@ export const payPayslip = async (req, res) => {
     if (!payslip) return res.status(404).json({ success: false, message: 'Payslip not found.' });
 
     const actor = { id: req.user._id, name: req.user.name, model: 'User' };
-    const tenant = await Tenant.findById(tid).select('paystack.requireDualApproval');
+    const tenant = await Tenant.findById(tid).select('wallet.requireDualApproval');
 
-    if (tenant?.paystack?.requireDualApproval) {
+    if (tenant?.wallet?.requireDualApproval) {
       const { approval, skipped } = await createApprovalRequest(tid, [req.params.id], actor);
       if (!approval) return res.status(400).json({ success: false, message: skipped[0]?.message || 'Nothing to submit for approval.' });
       return res.json({ success: true, message: 'Submitted for approval. A different HR admin must approve it before payment.', data: { requiresApproval: true, approvalId: approval._id } });
     }
 
-    const secretKey = await getDecryptedPaystackKey(tid);
+    let secretKey;
+    try { secretKey = getPlatformSecretKey(); }
+    catch (err) { return res.status(503).json({ success: false, message: err.message }); }
+
     const result = await payOnePayslip(payslip, secretKey, tid, actor);
 
-    if (!result.ok) return res.status(400).json({ success: false, message: result.message });
+    if (!result.ok) return res.status(400).json({ success: false, message: result.message, data: result });
     res.json({ success: true, message: result.requiresOtp ? 'Transfer requires an OTP to finalize.' : 'Payment initiated.', data: result });
   } catch (err) {
     res.status(400).json({ success: false, message: err.message });
@@ -153,9 +245,9 @@ export const payPayslip = async (req, res) => {
 
 // POST /api/payslips/pay-batch – HR only. Body: { payslipIds: [] }
 // Pays each payslip independently via the single-transfer API (not
-// Paystack's /transfer/bulk) so partial failures and per-employee OTP
-// requirements are handled the same way as a one-off payment, with a clear
-// per-row result instead of an opaque batch response.
+// Paystack's /transfer/bulk) so partial failures, per-employee OTP
+// requirements, and wallet exhaustion are all handled the same way as a
+// one-off payment, with a clear per-row result.
 export const payBatch = async (req, res) => {
   try {
     const tid = req.tenantId;
@@ -164,9 +256,9 @@ export const payBatch = async (req, res) => {
     if (ids.length > 100) return res.status(400).json({ success: false, message: 'Batch payment is limited to 100 payslips at a time.' });
 
     const actor = { id: req.user._id, name: req.user.name, model: 'User' };
-    const tenant = await Tenant.findById(tid).select('paystack.requireDualApproval');
+    const tenant = await Tenant.findById(tid).select('wallet.requireDualApproval');
 
-    if (tenant?.paystack?.requireDualApproval) {
+    if (tenant?.wallet?.requireDualApproval) {
       const { approval, skipped } = await createApprovalRequest(tid, ids, actor);
       if (!approval) return res.status(400).json({ success: false, message: 'Nothing to submit for approval.', data: skipped });
       return res.json({
@@ -176,7 +268,9 @@ export const payBatch = async (req, res) => {
       });
     }
 
-    const secretKey = await getDecryptedPaystackKey(tid);
+    let secretKey;
+    try { secretKey = getPlatformSecretKey(); }
+    catch (err) { return res.status(503).json({ success: false, message: err.message }); }
 
     const results = [];
     for (const id of ids) {
@@ -184,6 +278,8 @@ export const payBatch = async (req, res) => {
       if (!payslip) { results.push({ ok: false, payslipId: id, message: 'Payslip not found.' }); continue; }
       results.push(await payOnePayslip(payslip, secretKey, tid, actor));
     }
+
+    notifyInsufficientBalance(tid, results);
 
     const succeeded = results.filter(r => r.ok).length;
     res.json({
@@ -198,6 +294,8 @@ export const payBatch = async (req, res) => {
 
 // POST /api/payslips/:id/pay/finalize – HR only. Body: { otp }
 // Completes a transfer that came back with payment.status = 'Pending_OTP'.
+// The wallet debit already happened at initiation — finalizing only
+// changes whether Paystack actually sends the money, not the balance.
 export const finalizePayslipPayment = async (req, res) => {
   try {
     const tid = req.tenantId;
@@ -209,11 +307,17 @@ export const finalizePayslipPayment = async (req, res) => {
     if (payslip.payment?.status !== 'Pending_OTP')
       return res.status(400).json({ success: false, message: `Payment is not awaiting OTP (currently ${payslip.payment?.status || 'Unpaid'}).` });
 
-    const secretKey = await getDecryptedPaystackKey(tid);
+    let secretKey;
+    try { secretKey = getPlatformSecretKey(); }
+    catch (err) { return res.status(503).json({ success: false, message: err.message }); }
+
     try {
       const result = await finalizeTransfer(secretKey, { transferCode: payslip.payment.transferCode, otp });
       payslip.payment.status = mapTransferStatus(result.status);
-      if (payslip.payment.status === 'Paid') payslip.payment.paidAt = new Date();
+      if (payslip.payment.status === 'Paid') {
+        payslip.payment.paidAt = new Date();
+        await WalletTransaction.updateOne({ reference: payslip.payment.reference, type: 'Payroll_Debit' }, { status: 'Success' });
+      }
       await payslip.save();
 
       recordAudit({
@@ -236,6 +340,20 @@ export const finalizePayslipPayment = async (req, res) => {
       payslip.payment.status = 'Failed';
       payslip.payment.failureReason = err.message;
       await payslip.save();
+
+      // The OTP finalize failed outright (not just declined-then-retryable)
+      // — refund, same as a failed initiation.
+      const debit = await WalletTransaction.findOne({ reference: payslip.payment.reference, type: 'Payroll_Debit', status: { $ne: 'Failed' } });
+      if (debit) {
+        const refunded = await Tenant.findOneAndUpdate({ _id: tid }, { $inc: { 'wallet.balance': debit.amount } }, { new: true }).select('wallet.balance');
+        await WalletTransaction.updateOne({ _id: debit._id }, { status: 'Failed' });
+        await WalletTransaction.create({
+          tenantId: tid, type: 'Refund', amount: debit.amount, balanceAfter: refunded.wallet.balance,
+          reference: payslip.payment.reference, status: 'Success', relatedPayslip: payslip._id,
+          meta: { reason: 'OTP finalize failed', error: err.message },
+        });
+      }
+
       res.status(400).json({ success: false, message: err instanceof PaystackError ? err.message : err.message });
     }
   } catch (err) {

@@ -6,6 +6,8 @@ import { fileURLToPath } from 'url';
 import connectDB from './config/db.js';
 import tenantMiddleware from './middleware/tenant.js';
 import apiRoutes from './routes/api.js';
+import agenda from './jobs/agenda.js';
+import { startPayrollScheduler } from './jobs/payrollScheduler.js';
 
 // Load environment variables by absolute path (not process.cwd()) so this
 // works no matter which directory `node server.js` / `nodemon` is launched
@@ -58,6 +60,14 @@ app.use((err, req, res, next) => {
 // Connect to Database & Start Server
 const startServer = async () => {
   await connectDB();
+
+  // Scheduled payroll (Agenda, backed by the same MongoDB). Non-fatal if it
+  // can't start — the rest of the API should still come up even if the
+  // scheduler has a problem, since manual Pay Now/Pay Selected don't depend
+  // on it.
+  startPayrollScheduler(agenda);
+  agenda.start().catch(err => console.error('Agenda failed to start:', err.message));
+
   app.listen(PORT, () => {
     console.log(`Server running on port ${PORT} in development mode`);
   });

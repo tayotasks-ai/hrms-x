@@ -1,7 +1,7 @@
 import mongoose from 'mongoose';
 
 // A maker-checker request for a payroll disbursement run. Created instead
-// of paying directly when Tenant.paystack.requireDualApproval is on (see
+// of paying directly when Tenant.wallet.requireDualApproval is on (see
 // controllers/payslipPaymentController.js). A different HR_Admin than the
 // one who requested it must approve before Paystack is actually called —
 // enforced in controllers/payrollApprovalController.js, not just in the UI.

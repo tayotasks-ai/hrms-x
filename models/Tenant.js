@@ -13,22 +13,46 @@ const tenantSchema = new mongoose.Schema({
     trim: true,
     lowercase: true
   },
-  // Per-tenant Paystack credentials for payroll disbursement. Each tenant
-  // company connects its OWN Paystack business account — this platform never
-  // holds or moves tenant funds itself, it only calls Paystack's Transfers
-  // API using the tenant's own secret key.
-  paystack: {
-    secretKeyEncrypted: { type: String, select: false },
-    connected: { type: Boolean, default: false },
-    connectedAt: { type: Date },
-    // Maker-checker for payroll disbursement — off by default so a
-    // single-HR_Admin tenant is never accidentally locked out of paying
-    // anyone (dual approval needs a second distinct HR_Admin to exist).
-    // When on, Pay Now / Pay Selected creates a PayrollApproval request
-    // instead of calling Paystack directly; a different HR_Admin must
-    // approve it from the Payroll Approvals queue before the transfer
-    // actually fires. See controllers/payrollApprovalController.js.
+  // Payroll wallet — replaces the old per-tenant "bring your own Paystack
+  // key" model. Every tenant funds THIS wallet (by transferring into their
+  // own dedicated virtual account) and every payroll transfer is disbursed
+  // from the PLATFORM's own Paystack account (see PAYSTACK_SECRET_KEY env
+  // var), debiting the wallet balance. Paystack's own transfer fee plus our
+  // flat markup (see utils/paystack.js computeTransferFee) is added on top
+  // of each employee's net pay when the wallet is debited.
+  wallet: {
+    balance: { type: Number, default: 0, min: 0 }, // Naira
+    paystackCustomerCode: { type: String },
+    dedicatedAccount: {
+      accountNumber: { type: String },
+      accountName: { type: String },
+      bankName: { type: String },
+      bankId: { type: Number },
+      active: { type: Boolean, default: false },
+    },
+    // Maker-checker for MANUAL payroll disbursement (Pay Now / Pay Selected)
+    // — off by default so a single-HR_Admin tenant is never accidentally
+    // locked out of paying anyone (dual approval needs a second distinct
+    // HR_Admin to exist). When on, those actions create a PayrollApproval
+    // request instead of calling Paystack directly; a different HR_Admin
+    // must approve it from the Payroll Approvals queue before the transfer
+    // actually fires. See controllers/payrollApprovalController.js. Does
+    // NOT apply to the automatic payday run (see payrollSchedule below) —
+    // there's no second admin to click approve on an unattended job, so
+    // scheduling the run IS the deliberate authorization.
     requireDualApproval: { type: Boolean, default: false },
+  },
+  // HR-configured payday — checked once a day by the Agenda job in
+  // backend/jobs/payrollScheduler.js. When the day matches (or, if
+  // useLastDayOfMonth is set, today IS the last day of the month), every
+  // outstanding payslip for the current period is paid in a stable order
+  // until the wallet balance runs out; anything left unpaid is skipped and
+  // HR is notified. lastRunAt guards against paying twice in one day.
+  payrollSchedule: {
+    dayOfMonth: { type: Number, min: 1, max: 31, default: 25 },
+    useLastDayOfMonth: { type: Boolean, default: false },
+    active: { type: Boolean, default: false },
+    lastRunAt: { type: Date },
   },
   // Company-wide annual leave entitlement, in working days, per leave type.
   // Applies to every employee equally (no per-employee/role overrides).

@@ -1,15 +1,15 @@
 import Employee from '../models/Employee.js';
-import { getDecryptedPaystackKey } from './paymentSettingsController.js';
-import { listBanks, resolveAccountNumber, createTransferRecipient, PaystackError } from '../utils/paystack.js';
+import { listBanks, resolveAccountNumber, createTransferRecipient, getPlatformSecretKey, PaystackError } from '../utils/paystack.js';
 import { recordAudit } from '../utils/auditLog.js';
 import { encryptPii } from '../utils/crypto.js';
 import { maskEmployeePii } from '../utils/piiDisplay.js';
 
 // GET /api/banks – any authenticated user (employees need this to fill in
-// their own bank details). Requires the tenant to have connected Paystack.
+// their own bank details). Uses the platform's own Paystack key — bank
+// listing/verification isn't tenant-specific under the wallet model.
 export const getBanks = async (req, res) => {
   try {
-    const secretKey = await getDecryptedPaystackKey(req.tenantId);
+    const secretKey = getPlatformSecretKey();
     const banks = await listBanks(secretKey);
     res.json({ success: true, data: banks });
   } catch (err) {
@@ -38,7 +38,7 @@ export const verifyBankAccount = async (req, res) => {
     if (!accountNumber || !bankCode)
       return res.status(400).json({ success: false, message: 'accountNumber and bankCode are required.' });
 
-    const secretKey = await getDecryptedPaystackKey(tid);
+    const secretKey = getPlatformSecretKey();
 
     const resolved = await resolveAccountNumber(secretKey, accountNumber, bankCode);
     const recipient = await createTransferRecipient(secretKey, {

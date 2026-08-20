@@ -12,6 +12,15 @@ import crypto from 'crypto';
 
 const BASE_URL = 'https://api.paystack.co';
 
+// The platform's own Paystack secret key — used for every wallet-model call
+// (customer/DVA creation, all payroll transfers, webhook verification).
+// Never a tenant's key; tenants no longer hold Paystack credentials.
+export const getPlatformSecretKey = () => {
+  const key = process.env.PAYSTACK_SECRET_KEY;
+  if (!key) throw new Error('Payroll is not configured on the server yet (missing PAYSTACK_SECRET_KEY).');
+  return key;
+};
+
 class PaystackError extends Error {
   constructor(message, status, body) {
     super(message);
@@ -45,6 +54,66 @@ const request = async (secretKey, method, path, body) => {
 export const validateSecretKey = async (secretKey) => {
   await request(secretKey, 'GET', '/balance');
   return true;
+};
+
+// ── Payroll wallet: platform-key helpers ────────────────────────────────────
+// Everything below is called with the PLATFORM's own Paystack secret key
+// (process.env.PAYSTACK_SECRET_KEY), never a tenant's — tenants no longer
+// hold their own Paystack credentials under the wallet model. See
+// controllers/walletController.js.
+
+// A dedicated virtual account must be attached to a Paystack customer.
+// One customer per tenant, created once the first time a wallet is set up.
+export const createCustomer = async (secretKey, { email, firstName, lastName, phone }) => {
+  const res = await request(secretKey, 'POST', '/customer', {
+    email,
+    first_name: firstName,
+    last_name: lastName,
+    phone,
+  });
+  return { customerCode: res.data.customer_code, customerId: res.data.id };
+};
+
+// Creates the actual NUBAN. preferredBank is a provider slug (e.g.
+// 'wema-bank', 'titan-paystack') — see listDvaProviders. Requires the
+// platform's Paystack integration to have Dedicated NUBAN enabled; if it
+// isn't, Paystack returns an error here that the caller should surface
+// as-is rather than retry.
+export const createDedicatedAccount = async (secretKey, { customerCode, preferredBank }) => {
+  const res = await request(secretKey, 'POST', '/dedicated_account', {
+    customer: customerCode,
+    preferred_bank: preferredBank,
+  });
+  return {
+    accountNumber: res.data.account_number,
+    accountName: res.data.account_name,
+    bankName: res.data.bank?.name,
+    bankId: res.data.bank?.id,
+    active: !!res.data.active,
+  };
+};
+
+// Which banks can currently issue a dedicated virtual account on this
+// integration — used to pick/validate PAYSTACK_DVA_PREFERRED_BANK.
+export const listDvaProviders = async (secretKey) => {
+  const res = await request(secretKey, 'GET', '/dedicated_account/available_providers');
+  return (res.data || []).map(p => ({ slug: p.provider_slug, bankId: p.bank_id, bankName: p.bank_name }));
+};
+
+// Paystack's own NGN transfer fee tiers (support.paystack.com/en/articles/2132866,
+// checked August 2026): ₦10 at/under ₦5,000, ₦25 up to ₦50,000, ₦50 above
+// that. Separately, a ₦50 flat stamp duty applies to transfers of ₦10,000+
+// UNLESS the merchant is registered with Paystack as a "Registered Payroll"
+// merchant (which this platform should apply for, since payroll disbursement
+// is its primary use of Transfers) — stampDutyApplies defaults to true
+// (the conservative assumption) until that registration is confirmed; flip
+// PAYSTACK_STAMP_DUTY_EXEMPT=true once it's approved.
+export const computeTransferFee = (amountNaira, { stampDutyApplies = true } = {}) => {
+  const amount = Number(amountNaira) || 0;
+  const paystackFee = amount <= 5000 ? 10 : amount <= 50000 ? 25 : 50;
+  const stampDuty = stampDutyApplies && amount >= 10000 ? 50 : 0;
+  const markup = 500; // our flat charge per transfer, per the founders' pricing decision
+  return { paystackFee, stampDuty, markup, total: paystackFee + stampDuty + markup };
 };
 
 // Nigerian banks, for the account-selection dropdown. { name, code, slug }[]

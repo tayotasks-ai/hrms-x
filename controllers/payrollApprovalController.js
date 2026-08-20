@@ -1,9 +1,10 @@
 import PayrollApproval from '../models/PayrollApproval.js';
 import Payslip from '../models/Payslip.js';
-import { getDecryptedPaystackKey } from './paymentSettingsController.js';
+import User from '../models/User.js';
+import { getPlatformSecretKey } from '../utils/paystack.js';
 import { payOnePayslip } from './payslipPaymentController.js';
 import { recordAudit } from '../utils/auditLog.js';
-import { notify } from '../utils/notify.js';
+import { notify, notifyHrAdmins } from '../utils/notify.js';
 
 // GET /api/payroll-approvals – HR only. Query: ?status=Pending (default: all)
 export const getPayrollApprovals = async (req, res) => {
@@ -38,7 +39,9 @@ export const approvePayrollApproval = async (req, res) => {
       return res.status(403).json({ success: false, message: 'You cannot approve a payroll run you initiated yourself. Ask another HR admin to review it.' });
     }
 
-    const secretKey = await getDecryptedPaystackKey(tid);
+    let secretKey;
+    try { secretKey = getPlatformSecretKey(); }
+    catch (err) { return res.status(503).json({ success: false, message: err.message }); }
     const actor = { id: req.user._id, name: req.user.name, model: 'User' };
 
     const results = [];
@@ -46,7 +49,17 @@ export const approvePayrollApproval = async (req, res) => {
       const payslip = await Payslip.findOne({ _id: payslipId, tenantId: tid });
       if (!payslip) { results.push({ payslipId, ok: false, message: 'Payslip not found.' }); continue; }
       const result = await payOnePayslip(payslip, secretKey, tid, actor);
-      results.push({ payslipId, ok: result.ok, status: result.status, message: result.message });
+      results.push({ payslipId, ok: result.ok, status: result.status, message: result.message, insufficientBalance: result.insufficientBalance });
+    }
+
+    const short = results.filter(r => r.insufficientBalance);
+    if (short.length > 0) {
+      notifyHrAdmins(User, tid, {
+        type: 'wallet_insufficient_balance',
+        title: 'Payroll wallet ran out of balance',
+        message: `${short.length} of ${results.length} approved payslip(s) could not be paid — the wallet ran out of balance. Top up and re-run the rest from Payroll.`,
+        link: 'wallet',
+      });
     }
 
     approval.status = 'Approved';
