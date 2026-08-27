@@ -5,6 +5,7 @@ import Tenant from '../models/Tenant.js';
 import User from '../models/User.js';
 import Employee from '../models/Employee.js';
 import { PLAN_PRICE_PER_EMPLOYEE } from './tenantController.js';
+import { notifyHrAdmins } from '../utils/notify.js';
 
 const generatePlatformToken = (id) =>
   jwt.sign({ id, type: 'platform' }, process.env.JWT_SECRET, { expiresIn: '12h' });
@@ -146,9 +147,21 @@ export const getTenantDetail = async (req, res) => {
 // login/session mechanism (setAuthUser + setActiveTenant) exactly as if a
 // real login had happened. Every call is written to ImpersonationLog — this
 // bypasses the tenant-isolation model on purpose, so it needs to always be
-// traceable to who did it, for which tenant, and when.
+// traceable to who did it, for which tenant, when, and why.
+//
+// Two NDPA-accountability requirements enforced here, not just logged:
+//   1. `reason` is required — a timestamp alone doesn't show purpose.
+//   2. The tenant's own HR_Admins are notified every time this happens (see
+//      notifyHrAdmins below) — access to their data shouldn't be invisible
+//      to them. See frontend PrivacyConsentModal.vue for the corresponding
+//      disclosure shown to their employees.
 export const impersonateTenant = async (req, res) => {
   try {
+    const reason = (req.body?.reason || '').trim();
+    if (!reason) {
+      return res.status(400).json({ success: false, message: 'A reason is required to impersonate a tenant.' });
+    }
+
     const tenant = await Tenant.findById(req.params.id);
     if (!tenant) return res.status(404).json({ success: false, message: 'Tenant not found.' });
 
@@ -168,8 +181,17 @@ export const impersonateTenant = async (req, res) => {
       impersonatedUserId: admin._id,
       impersonatedUserName: admin.name,
       impersonatedUserRole: admin.role,
+      reason,
       expiresAt,
     });
+
+    // Fire-and-forget — transparency to the tenant, not a gate on access.
+    notifyHrAdmins(User, tenant._id, {
+      type: 'platform_support',
+      title: 'Platform support accessed your account',
+      message: `${req.platformAdmin.name} (HRMS X platform support) logged in as your HR Admin account for support purposes. Reason given: "${reason}". This session expires in 45 minutes.`,
+      link: 'audit-log',
+    }).catch(err => console.error('Impersonation notification failed:', err.message));
 
     res.json({
       success: true,

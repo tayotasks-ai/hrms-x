@@ -13,6 +13,11 @@ const impersonationLogSchema = new mongoose.Schema({
   impersonatedUserId: { type: mongoose.Schema.Types.ObjectId, required: true },
   impersonatedUserName: { type: String, required: true }, // snapshot
   impersonatedUserRole: { type: String, required: true },
+  // Required, not optional — accountability under NDPA means being able to
+  // show WHY access happened, not just that it did. Enforced in
+  // controllers/platformController.js (impersonateTenant rejects an empty
+  // reason before this document is ever created).
+  reason: { type: String, required: true, trim: true },
   startedAt: { type: Date, default: Date.now },
   expiresAt: { type: Date, required: true },
 });
