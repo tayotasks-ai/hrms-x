@@ -5,6 +5,10 @@ const BYPASS = new Set(['/api/health', '/api/tenants', '/api/auth/login', '/api/
 
 const tenantMiddleware = (req, res, next) => {
   if (BYPASS.has(req.path)) return next();
+  // Platform-admin routes are inherently cross-tenant (list/monitor every
+  // tenant) — they authenticate via protectPlatform, not the per-tenant
+  // X-Tenant-ID + protect combo, so there's no single tenant to require here.
+  if (req.path.startsWith('/api/platform')) return next();
 
   const tenantId = req.headers['x-tenant-id'];
   if (!tenantId) {

@@ -1,5 +1,6 @@
 import express from 'express';
 import { protect, hrOnly } from '../middleware/authMiddleware.js';
+import { protectPlatform } from '../middleware/platformAuth.js';
 import { authLimiter } from '../middleware/rateLimiter.js';
 
 // Controllers
@@ -40,6 +41,7 @@ import { exportMyData, createDsarRequest, getDsarRequests, updateDsarRequest } f
 import { getRetentionSettings, updateRetentionSettings, getRetentionCandidates, anonymizeEmployee } from '../controllers/retentionController.js';
 import { pingActivity, getMyActivity, getTeamActivity } from '../controllers/activityController.js';
 import { getMonitoringSettings, updateMonitoringSettings, setMonitoringConsent, uploadScreenshot, getScreenshots, getScreenshotImage, deleteScreenshot } from '../controllers/monitoringController.js';
+import { platformLogin, listTenants, getTenantDetail, impersonateTenant } from '../controllers/platformController.js';
 
 const router = express.Router();
 
@@ -52,6 +54,17 @@ router.post('/auth/verify-otp', authLimiter, verifyLoginOtp);
 router.post('/auth/forgot-password', authLimiter, forgotPassword);
 router.post('/auth/reset-password', authLimiter, resetPassword);
 router.post('/webhooks/paystack', handlePaystackWebhook);
+
+// ── Platform (root) admin ────────────────────────────────────────────────────
+// Entirely separate auth track from every route below — see
+// middleware/platformAuth.js and controllers/platformController.js. Not
+// gated by the tenant `protect` middleware at all; each route below attaches
+// protectPlatform directly. Fixed, hand-seeded accounts only (see
+// scripts/seedPlatformAdmin.js) — there is no signup route.
+router.post('/platform/login', authLimiter, platformLogin);
+router.get('/platform/tenants', protectPlatform, listTenants);
+router.get('/platform/tenants/:id', protectPlatform, getTenantDetail);
+router.post('/platform/tenants/:id/impersonate', protectPlatform, impersonateTenant);
 
 // ── All authenticated routes require protect middleware ────────────────────────
 router.use(protect);
