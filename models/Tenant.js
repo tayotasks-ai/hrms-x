@@ -15,12 +15,14 @@ const tenantSchema = new mongoose.Schema({
   },
   // Freemium plan. Every tenant starts Free, capped at freeEmployeeLimit
   // non-offboarded employees — see employeeController.js's assertSeatAvailable,
-  // called from both createEmployee and bulkCreateEmployees. Upgrading is
-  // currently a self-serve, no-payment stub (controllers/tenantController.js
-  // upgradeTenantPlan) — pricing hasn't been set yet, so there's nothing to
-  // actually charge. Wire in real billing (Paystack Subscriptions or similar)
-  // before this is customer-facing; right now clicking "Upgrade" just lifts
-  // the cap.
+  // called from both createEmployee and bulkCreateEmployees. Paid tier is
+  // ₦1,500/employee/month (see PLAN_PRICE_PER_EMPLOYEE in
+  // controllers/tenantController.js — platform-wide, not stored per-tenant).
+  // Upgrading is still a self-serve, no-payment stub (upgradeTenantPlan) —
+  // the price is now real, but there's no recurring-billing mechanism yet.
+  // Wire in real billing (Paystack Subscriptions or similar) before this is
+  // customer-facing for revenue; right now clicking "Upgrade" just lifts the
+  // cap without collecting payment.
   plan: {
     tier: { type: String, enum: ['Free', 'Paid'], default: 'Free' },
     freeEmployeeLimit: { type: Number, default: 5, min: 1 },

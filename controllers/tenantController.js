@@ -5,6 +5,11 @@ import { sendEmail } from '../utils/email.js';
 import { welcomeTenant } from '../utils/emailTemplates.js';
 import { recordAudit } from '../utils/auditLog.js';
 
+// Paid-tier price, per non-offboarded employee, per month. Platform-wide —
+// not tenant-configurable — so it lives here as a constant rather than on
+// the Tenant document. Update this single value if pricing ever changes.
+export const PLAN_PRICE_PER_EMPLOYEE = 1500;
+
 // GET /api/tenants  – public (for landing page demo list)
 export const getTenants = async (req, res) => {
   try {
@@ -73,6 +78,8 @@ export const getTenantPlan = async (req, res) => {
         freeEmployeeLimit: tenant?.plan?.freeEmployeeLimit ?? 5,
         employeeCount,
         upgradedAt: tenant?.plan?.upgradedAt || null,
+        pricePerEmployee: PLAN_PRICE_PER_EMPLOYEE,
+        estimatedMonthlyCost: employeeCount * PLAN_PRICE_PER_EMPLOYEE,
       },
     });
   } catch (err) {
@@ -81,10 +88,12 @@ export const getTenantPlan = async (req, res) => {
 };
 
 // POST /api/tenant/plan/upgrade – HR only.
-// NOTE: pricing hasn't been decided yet, so this is a no-payment stub that
-// just lifts the free-tier employee cap. Replace with a real Paystack
-// Subscription (or equivalent recurring charge) before relying on this for
-// actual revenue — see the comment on Tenant.plan in models/Tenant.js.
+// Price is set (₦1,500/employee/month, see PLAN_PRICE_PER_EMPLOYEE above)
+// but there is still no recurring-billing mechanism wired up — this remains
+// a no-payment, self-serve stub that just lifts the free-tier employee cap.
+// Replace with a real Paystack Subscription (or equivalent recurring charge)
+// before relying on this for actual revenue collection — see the comment on
+// Tenant.plan in models/Tenant.js.
 export const upgradeTenantPlan = async (req, res) => {
   try {
     const tid = req.tenantId;
@@ -103,7 +112,11 @@ export const upgradeTenantPlan = async (req, res) => {
       changes: [{ field: 'tier', from: 'Free', to: 'Paid' }],
     });
 
-    res.json({ success: true, message: 'Upgraded — the 5-employee limit no longer applies.', data: tenant.plan });
+    res.json({
+      success: true,
+      message: `Upgraded — the 5-employee limit no longer applies. Billing at ₦${PLAN_PRICE_PER_EMPLOYEE.toLocaleString()}/employee/month is not yet collected automatically.`,
+      data: tenant.plan,
+    });
   } catch (err) {
     res.status(500).json({ success: false, message: err.message });
   }
