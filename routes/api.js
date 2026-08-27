@@ -18,7 +18,7 @@ import { getDocuments, createDocument, updateDocument } from '../controllers/doc
 import { getOnboardings, createOnboarding, updateOnboardingTask, updateOnboardingStage, addOnboardingTask, deleteOnboarding } from '../controllers/onboardingController.js';
 import { getProbations, createProbation, recordOutcome } from '../controllers/probationController.js';
 import { getEmploymentHistories, createEmploymentHistory } from '../controllers/employmentHistoryController.js';
-import { getRequisitions, createRequisition, updateRequisitionStatus } from '../controllers/requisitionController.js';
+import { getRequisitions, createRequisition, updateRequisitionStatus, getRequisitionAttachmentImage } from '../controllers/requisitionController.js';
 import { getRedeployments, createRedeployment, completeRedeployment } from '../controllers/redeploymentController.js';
 import { getExitRecords, initiateExit, updateClearanceTask, completeExit } from '../controllers/exitController.js';
 import { getCases, createCase, addAction } from '../controllers/disciplinaryController.js';
@@ -219,6 +219,7 @@ router.post('/employment-history', hrOnly, createEmploymentHistory);
 router.get('/requisitions', getRequisitions);
 router.post('/requisitions', createRequisition);
 router.put('/requisitions/:id', hrOnly, updateRequisitionStatus);
+router.get('/requisitions/:id/attachments/:attachmentId/image', getRequisitionAttachmentImage);
 
 // Redeployments
 router.get('/redeployments', hrOnly, getRedeployments);

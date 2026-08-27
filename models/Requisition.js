@@ -57,8 +57,16 @@ const requisitionSchema = new mongoose.Schema({
     enum: ['Draft', 'Pending', 'Approved', 'Rejected', 'Processed'],
     default: 'Draft'
   },
-  documentAttachments: [{
-    type: String // URLs or paths to uploaded documents
+  // Receipt/invoice/quote images, stored in GridFS (bucket
+  // 'requisition-attachments') — see controllers/requisitionController.js.
+  // Uploaded as base64 at creation time; fileId points at the GridFS blob,
+  // everything else here is just display metadata.
+  attachments: [{
+    fileId: { type: mongoose.Schema.Types.ObjectId, required: true },
+    filename: { type: String, required: true },
+    contentType: { type: String, required: true },
+    sizeBytes: { type: Number, required: true },
+    uploadedAt: { type: Date, default: Date.now },
   }],
   managerComments: {
     type: String,
