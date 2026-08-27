@@ -8,6 +8,7 @@ import tenantMiddleware from './middleware/tenant.js';
 import apiRoutes from './routes/api.js';
 import agenda from './jobs/agenda.js';
 import { startPayrollScheduler } from './jobs/payrollScheduler.js';
+import { autoSeedPlatformAdmin } from './utils/autoSeedPlatformAdmin.js';
 
 // Load environment variables by absolute path (not process.cwd()) so this
 // works no matter which directory `node server.js` / `nodemon` is launched
@@ -60,6 +61,13 @@ app.use((err, req, res, next) => {
 // Connect to Database & Start Server
 const startServer = async () => {
   await connectDB();
+
+  // Creates the platform (root) admin from PLATFORM_ADMIN_EMAIL/
+  // PLATFORM_ADMIN_PASSWORD env vars if that account doesn't exist yet —
+  // see utils/autoSeedPlatformAdmin.js. No-ops if those env vars aren't set,
+  // or if the account already exists. Non-fatal: a problem here shouldn't
+  // take down the whole API.
+  autoSeedPlatformAdmin().catch(err => console.error('Platform admin auto-seed failed:', err.message));
 
   // Scheduled payroll (Agenda, backed by the same MongoDB). Non-fatal if it
   // can't start — the rest of the API should still come up even if the
