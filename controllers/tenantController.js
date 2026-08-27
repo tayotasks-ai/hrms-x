@@ -1,7 +1,9 @@
 import Tenant from '../models/Tenant.js';
 import User from '../models/User.js';
+import Employee from '../models/Employee.js';
 import { sendEmail } from '../utils/email.js';
 import { welcomeTenant } from '../utils/emailTemplates.js';
+import { recordAudit } from '../utils/auditLog.js';
 
 // GET /api/tenants  – public (for landing page demo list)
 export const getTenants = async (req, res) => {
@@ -49,6 +51,59 @@ export const createTenant = async (req, res) => {
       message: 'Organisation registered.',
       data: { tenant, admin: { _id: admin._id, name: admin.name, email: admin.email } },
     });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+};
+
+// GET /api/tenant/plan – HR only. Current plan tier, the free-tier cap, and
+// how many seats are currently in use, so the frontend can render a
+// "3/5 employees used" style banner without a second round trip.
+export const getTenantPlan = async (req, res) => {
+  try {
+    const tid = req.tenantId;
+    const [tenant, employeeCount] = await Promise.all([
+      Tenant.findById(tid).select('plan'),
+      Employee.countDocuments({ tenantId: tid, status: { $ne: 'Offboarded' } }),
+    ]);
+    res.json({
+      success: true,
+      data: {
+        tier: tenant?.plan?.tier || 'Free',
+        freeEmployeeLimit: tenant?.plan?.freeEmployeeLimit ?? 5,
+        employeeCount,
+        upgradedAt: tenant?.plan?.upgradedAt || null,
+      },
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+};
+
+// POST /api/tenant/plan/upgrade – HR only.
+// NOTE: pricing hasn't been decided yet, so this is a no-payment stub that
+// just lifts the free-tier employee cap. Replace with a real Paystack
+// Subscription (or equivalent recurring charge) before relying on this for
+// actual revenue — see the comment on Tenant.plan in models/Tenant.js.
+export const upgradeTenantPlan = async (req, res) => {
+  try {
+    const tid = req.tenantId;
+    const tenant = await Tenant.findByIdAndUpdate(
+      tid,
+      { 'plan.tier': 'Paid', 'plan.upgradedAt': new Date() },
+      { new: true }
+    ).select('plan');
+
+    recordAudit({
+      tenantId: tid,
+      actor: { id: req.user._id, name: req.user.name, model: req.userRole === 'Employee' ? 'Employee' : 'User' },
+      targetType: 'TenantPlan',
+      targetId: tid,
+      targetName: 'Subscription plan',
+      changes: [{ field: 'tier', from: 'Free', to: 'Paid' }],
+    });
+
+    res.json({ success: true, message: 'Upgraded — the 5-employee limit no longer applies.', data: tenant.plan });
   } catch (err) {
     res.status(500).json({ success: false, message: err.message });
   }

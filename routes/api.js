@@ -3,7 +3,7 @@ import { protect, hrOnly } from '../middleware/authMiddleware.js';
 import { authLimiter } from '../middleware/rateLimiter.js';
 
 // Controllers
-import { getTenants, createTenant } from '../controllers/tenantController.js';
+import { getTenants, createTenant, getTenantPlan, upgradeTenantPlan } from '../controllers/tenantController.js';
 import { getDepartments, createDepartment, updateDepartment, deleteDepartment } from '../controllers/departmentController.js';
 import { loginUser, changePassword, forgotPassword, resetPassword, verifyLoginOtp, setTwoFactor, setPrivacyConsent } from '../controllers/authController.js';
 import { getDashboardStats } from '../controllers/dashboardController.js';
@@ -58,6 +58,10 @@ router.use(protect);
 
 // Dashboard
 router.get('/dashboard/stats', getDashboardStats);
+
+// Tenant plan (freemium cap)
+router.get('/tenant/plan', hrOnly, getTenantPlan);
+router.post('/tenant/plan/upgrade', hrOnly, upgradeTenantPlan);
 
 // Auth (authenticated)
 router.put('/auth/change-password', changePassword);

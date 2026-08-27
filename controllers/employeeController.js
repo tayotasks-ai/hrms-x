@@ -14,6 +14,23 @@ const AUDIT_LABELS = { salary: 'Salary', status: 'Status', role: 'Role', departm
 
 const escapeRegex = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
+// Freemium seat cap — pure decision logic (no DB access), kept separate from
+// getRemainingSeats below so it's directly unit-testable. Paid tenants have
+// no cap; Free tenants are limited to `limit` non-offboarded employees.
+export const computeRemainingSeats = (tier, limit, currentCount) => {
+  if (tier === 'Paid') return Infinity;
+  return Math.max(0, (limit ?? 5) - currentCount);
+};
+
+// Fetches the tenant's plan + current (non-offboarded) headcount and applies
+// computeRemainingSeats. Offboarded employees don't count against headcount.
+const getRemainingSeats = async (tid) => {
+  const tenant = await Tenant.findById(tid).select('plan');
+  const limit = tenant?.plan?.freeEmployeeLimit ?? 5;
+  const count = await Employee.countDocuments({ tenantId: tid, status: { $ne: 'Offboarded' } });
+  return { remaining: computeRemainingSeats(tenant?.plan?.tier, limit, count), limit };
+};
+
 // Ensures an employee marked 'Onboarding' has a matching Onboarding record,
 // so they actually show up in the Onboarding menu.
 const ensureOnboardingRecord = async (employeeId, tenantId) => {
@@ -116,6 +133,20 @@ export const createEmployee = async (req, res) => {
     if (exists)
       return res.status(409).json({ success: false, message: 'An employee with this email already exists.' });
 
+    // Free-plan seat cap — doesn't apply to employees created straight into
+    // Offboarded (unusual, but shouldn't be blocked since they don't count
+    // toward headcount anyway).
+    if (req.body.status !== 'Offboarded') {
+      const { remaining, limit } = await getRemainingSeats(tid);
+      if (remaining <= 0) {
+        return res.status(402).json({
+          success: false,
+          message: `You're on the Free plan, capped at ${limit} employees. Upgrade to add more.`,
+          code: 'PLAN_LIMIT_REACHED',
+        });
+      }
+    }
+
     // If no password is provided in the payload, generate a secure default so they can login.
     const rawPassword = req.body.password || 'Welcome123!';
 
@@ -172,9 +203,18 @@ export const bulkCreateEmployees = async (req, res) => {
     const created = [];
     const failed = [];
 
+    // Free-plan seat cap — computed once, then decremented locally as rows
+    // are created, rather than re-querying the count on every row.
+    let { remaining: remainingSeats, limit: seatLimit } = await getRemainingSeats(tid);
+
     for (let i = 0; i < rows.length; i++) {
       const row = rows[i] || {};
       try {
+        const willCountTowardSeats = row.status !== 'Offboarded';
+        if (willCountTowardSeats && remainingSeats <= 0) {
+          throw new Error(`Free plan limit reached (${seatLimit} employees) — upgrade to import more.`);
+        }
+
         const email = (row.email || '').toLowerCase().trim();
         if (!email || !row.name?.trim() || !row.role?.trim() || row.salary === undefined || row.salary === '' || !row.birthDate) {
           throw new Error('Missing required field(s): name, email, role, salary, birthDate.');
@@ -225,6 +265,7 @@ export const bulkCreateEmployees = async (req, res) => {
         }
 
         created.push({ row: i, name: emp.name, email: emp.email, _id: emp._id });
+        if (willCountTowardSeats) remainingSeats -= 1;
       } catch (err) {
         failed.push({ row: i, email: row.email || '', name: row.name || '', message: err.message });
       }

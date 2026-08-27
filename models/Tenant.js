@@ -13,6 +13,19 @@ const tenantSchema = new mongoose.Schema({
     trim: true,
     lowercase: true
   },
+  // Freemium plan. Every tenant starts Free, capped at freeEmployeeLimit
+  // non-offboarded employees — see employeeController.js's assertSeatAvailable,
+  // called from both createEmployee and bulkCreateEmployees. Upgrading is
+  // currently a self-serve, no-payment stub (controllers/tenantController.js
+  // upgradeTenantPlan) — pricing hasn't been set yet, so there's nothing to
+  // actually charge. Wire in real billing (Paystack Subscriptions or similar)
+  // before this is customer-facing; right now clicking "Upgrade" just lifts
+  // the cap.
+  plan: {
+    tier: { type: String, enum: ['Free', 'Paid'], default: 'Free' },
+    freeEmployeeLimit: { type: Number, default: 5, min: 1 },
+    upgradedAt: { type: Date },
+  },
   // Payroll wallet — replaces the old per-tenant "bring your own Paystack
   // key" model. Every tenant funds THIS wallet (by transferring into their
   // own dedicated virtual account) and every payroll transfer is disbursed
