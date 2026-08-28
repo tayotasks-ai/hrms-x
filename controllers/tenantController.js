@@ -48,7 +48,12 @@ export const createTenant = async (req, res) => {
     });
 
     // Fire-and-forget welcome email
-    const tpl = welcomeTenant({ orgName: tenant.name, adminName: admin.name, adminEmail: admin.email });
+    const tpl = welcomeTenant({
+      orgName: tenant.name,
+      adminName: admin.name,
+      adminEmail: admin.email,
+      loginUrl: process.env.FRONTEND_URL || 'http://localhost:5173',
+    });
     sendEmail({ to: admin.email, ...tpl }).catch(err => console.error('Email failed:', err.message));
 
     res.status(201).json({

@@ -176,6 +176,7 @@ export const createEmployee = async (req, res) => {
         email: emp.email,
         defaultPassword: rawPassword,
         orgName: tenant?.name || 'Your Organisation',
+        loginUrl: process.env.FRONTEND_URL || 'http://localhost:5173',
       });
       sendEmail({ to: emp.email, ...tpl }).catch(err => console.error('Email failed:', err.message));
     }
@@ -263,6 +264,7 @@ export const bulkCreateEmployees = async (req, res) => {
           const tpl = employeeCreated({
             employeeName: emp.name, email: emp.email,
             defaultPassword: rawPassword, orgName: tenant?.name || 'Your Organisation',
+            loginUrl: process.env.FRONTEND_URL || 'http://localhost:5173',
           });
           sendEmail({ to: emp.email, ...tpl }).catch(err => console.error('Email failed:', err.message));
         }

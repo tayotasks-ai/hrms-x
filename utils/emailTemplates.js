@@ -58,7 +58,7 @@ const divider = () =>
   `<hr style="border:none;border-top:1px solid #e5e7eb;margin:20px 0;">`;
 
 // ─── 1. Welcome Tenant ─────────────────────────────────────────────────────
-export const welcomeTenant = ({ orgName, adminName, adminEmail }) => ({
+export const welcomeTenant = ({ orgName, adminName, adminEmail, loginUrl }) => ({
   subject: `Welcome to WorkDesk – ${orgName} is set up!`,
   html: wrap(`
     ${heading('Welcome to WorkDesk! 🎉')}
@@ -68,11 +68,12 @@ export const welcomeTenant = ({ orgName, adminName, adminEmail }) => ({
     ${divider()}
     ${para(`<strong>Login Email:</strong> ${adminEmail}`)}
     ${para('Use the password you set during registration to sign in.')}
+    ${loginUrl ? btn('Log in to WorkDesk', loginUrl) : ''}
   `)
 });
 
 // ─── 2. Employee Created ───────────────────────────────────────────────────
-export const employeeCreated = ({ employeeName, email, defaultPassword, orgName }) => ({
+export const employeeCreated = ({ employeeName, email, defaultPassword, orgName, loginUrl }) => ({
   subject: `Your WorkDesk account has been created – ${orgName}`,
   html: wrap(`
     ${heading('Welcome aboard! 👋')}
@@ -83,6 +84,7 @@ export const employeeCreated = ({ employeeName, email, defaultPassword, orgName 
     ${para(`<strong>Temporary Password:</strong> <code style="background:#f3f4f6;padding:4px 8px;border-radius:4px;font-size:14px;">${defaultPassword}</code>`)}
     ${divider()}
     ${para('Please log in and change your password as soon as possible.')}
+    ${loginUrl ? btn('Log in to WorkDesk', loginUrl) : ''}
   `)
 });
 
