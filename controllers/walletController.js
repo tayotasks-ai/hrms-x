@@ -1,6 +1,6 @@
 import Tenant from '../models/Tenant.js';
 import WalletTransaction from '../models/WalletTransaction.js';
-import { getPlatformSecretKey, createCustomer, createDedicatedAccount, updateCustomerPhone, PaystackError } from '../utils/paystack.js';
+import { getPlatformSecretKey, createCustomer, createDedicatedAccount, updateCustomerPhone, checkAvailableBalance, getPendingSettlements, PaystackError } from '../utils/paystack.js';
 import { recordAudit } from '../utils/auditLog.js';
 
 // GET /api/wallet — HR only. Balance, dedicated account (if set up), and
@@ -9,10 +9,48 @@ import { recordAudit } from '../utils/auditLog.js';
 export const getWallet = async (req, res) => {
   try {
     const tenant = await Tenant.findById(req.tenantId).select('wallet payrollSchedule name isTestAccount');
+    const ledgerBalance = tenant?.wallet?.balance || 0;
+
+    // Best-effort live check against Paystack's REAL available balance —
+    // this can legitimately read lower than the ledger above. A dedicated
+    // virtual account deposit credits ledgerBalance the instant our
+    // webhook fires, but Paystack doesn't release that money for outbound
+    // Transfers until it settles (typically same-day to next business
+    // day), so a freshly-funded wallet can show a balance here that isn't
+    // actually payable yet — see utils/paystack.js checkAvailableBalance.
+    //
+    // confirmedAvailable is capped at this tenant's own ledgerBalance, not
+    // the raw platform figure — Paystack balance is one shared pool across
+    // every tenant, and we never want to expose the platform's total
+    // treasury size to an individual tenant's HR admin. nextSettlementDate
+    // is just a date (no amount) from the platform's nearest pending
+    // settlement, as a rough "check back around then" hint.
+    //
+    // Both calls fail soft: if the platform key isn't configured or
+    // Paystack is unreachable, we just omit these fields rather than break
+    // the Wallet tab over a nice-to-have status readout.
+    let confirmedAvailable = null;
+    let nextSettlementDate = null;
+    try {
+      const secretKey = getPlatformSecretKey();
+      const [platformAvailable, pending] = await Promise.all([
+        checkAvailableBalance(secretKey),
+        getPendingSettlements(secretKey),
+      ]);
+      confirmedAvailable = Math.max(0, Math.min(ledgerBalance, platformAvailable));
+      if (pending.length > 0) {
+        nextSettlementDate = pending.map(s => s.settlementDate).sort()[0];
+      }
+    } catch {
+      // non-fatal — the Wallet tab just won't show the live-availability hint
+    }
+
     res.json({
       success: true,
       data: {
-        balance: tenant?.wallet?.balance || 0,
+        balance: ledgerBalance,
+        confirmedAvailable,
+        nextSettlementDate,
         dedicatedAccount: tenant?.wallet?.dedicatedAccount?.active ? tenant.wallet.dedicatedAccount : null,
         requireDualApproval: !!tenant?.wallet?.requireDualApproval,
         payrollSchedule: tenant?.payrollSchedule || { dayOfMonth: 25, useLastDayOfMonth: false, active: false },

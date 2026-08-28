@@ -204,6 +204,39 @@ export const finalizeTransfer = async (secretKey, { transferCode, otp }) => {
   return res.data;
 };
 
+// The REAL, spendable Paystack balance right now (kobo -> naira) — separate
+// from Tenant.wallet.balance, which is just our own internal ledger. A
+// dedicated-virtual-account deposit credits the ledger the instant our
+// webhook fires, but Paystack doesn't make that money available for
+// outbound Transfers until it settles (see getPendingSettlements below) —
+// so this can legitimately read lower than the sum of tenant ledgers for a
+// while. Used to show HR "why did my payment fail" before they hit Pay,
+// not after. Returns 0 (not an error) if NGN isn't in the response, which
+// shouldn't happen on a live NGN integration but is safer than throwing.
+export const checkAvailableBalance = async (secretKey) => {
+  const res = await request(secretKey, 'GET', '/balance');
+  const ngn = (res.data || []).find(b => b.currency === 'NGN');
+  return (ngn?.balance || 0) / 100;
+};
+
+// Settlements still in flight — i.e. money Paystack has collected on our
+// behalf (including DVA deposits) but hasn't yet paid into our bank account
+// / made available for Transfers. Each entry's `settlementDate` is when
+// Paystack expects to release it. Used to tell HR "₦X becomes available on
+// DATE" instead of a bare failed-payment error. Returns [] rather than
+// throwing on any API hiccup — this is a nice-to-have status readout, not
+// something that should ever block the Wallet tab from loading.
+export const getPendingSettlements = async (secretKey) => {
+  try {
+    const res = await request(secretKey, 'GET', '/settlement?status=pending&perPage=5');
+    return (res.data || [])
+      .filter(s => s.currency === 'NGN')
+      .map(s => ({ amount: (s.total_amount || 0) / 100, settlementDate: s.settlement_date }));
+  } catch {
+    return [];
+  }
+};
+
 // Verifies the `x-paystack-signature` header on an incoming webhook using
 // the RAW request body bytes (must be the exact bytes Paystack sent — a
 // re-serialized JSON.stringify(parsedBody) will NOT match).
