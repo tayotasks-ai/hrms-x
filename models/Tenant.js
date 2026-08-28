@@ -91,6 +91,13 @@ const tenantSchema = new mongoose.Schema({
     Study:         { type: Number, default: 10, min: 0 },
     Unpaid:        { type: Number, default: 0,  min: 0 }, // 0 = unlimited
     Emergency:     { type: Number, default: 5,  min: 0 },
+    // Optional extra approval step, off by default. When on, a leave
+    // request that has a relief officer assigned must get that relief
+    // officer's sign-off before it can reach the manager step — see
+    // controllers/leaveController.js updateLeaveStatus. When off (or the
+    // requester didn't pick a relief officer), the chain behaves exactly
+    // as before: Pending -> Manager Approved -> HR Approved -> Processed.
+    requireReliefOfficer: { type: Boolean, default: false },
   },
   // How long to keep an offboarded employee's personal data before it's
   // flagged for HR to review and anonymize. Default of 6 years is a common

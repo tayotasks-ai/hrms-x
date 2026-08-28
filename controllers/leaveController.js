@@ -22,7 +22,7 @@ export const getLeavePolicy = async (req, res) => {
   }
 };
 
-// PUT /api/leave-policy – HR only. Body: { Annual: 20, Sick: 12, ... }.
+// PUT /api/leave-policy – HR only. Body: { Annual: 20, Sick: 12, ..., requireReliefOfficer: true }.
 // A value of 0 means "no cap" for that leave type.
 export const updateLeavePolicy = async (req, res) => {
   try {
@@ -33,6 +33,9 @@ export const updateLeavePolicy = async (req, res) => {
       if (isNaN(days) || days < 0)
         return res.status(400).json({ success: false, message: `${type} must be a non-negative number of days.` });
       updates[`leavePolicy.${type}`] = days;
+    }
+    if (req.body.requireReliefOfficer !== undefined) {
+      updates['leavePolicy.requireReliefOfficer'] = !!req.body.requireReliefOfficer;
     }
     const tenant = await Tenant.findByIdAndUpdate(req.tenantId, { $set: updates }, { new: true }).select('leavePolicy');
     res.json({ success: true, message: 'Leave policy updated.', data: tenant.leavePolicy });
@@ -55,9 +58,10 @@ const daysUsedInYear = async (tenantId, employeeId, type, year) => {
   return records.reduce((sum, r) => sum + (r.workingDays || 0), 0);
 };
 
-// GET /api/leaves — employees see their own requests PLUS anything from
-// people who report directly to them (needed for the manager-approval step
-// below; otherwise a manager would never see requests to act on).
+// GET /api/leaves — employees see their own requests, plus anything from
+// people who report directly to them (needed for the manager-approval step),
+// plus anything where they're the assigned relief officer (needed for that
+// step — see updateLeaveStatus below).
 export const getLeaves = async (req, res) => {
   try {
     const tid = req.tenantId;
@@ -65,7 +69,13 @@ export const getLeaves = async (req, res) => {
     if (req.userRole === 'Employee') {
       const directReports = await Employee.find({ tenantId: tid, managerId: req.user._id }).select('_id');
       const reportIds = directReports.map(e => e._id);
-      query = { tenantId: tid, employeeId: { $in: [req.user._id, ...reportIds] } };
+      query = {
+        tenantId: tid,
+        $or: [
+          { employeeId: { $in: [req.user._id, ...reportIds] } },
+          { reliefOfficer: req.user._id },
+        ],
+      };
     }
 
     const leaves = await Leave.find(query)
@@ -120,6 +130,27 @@ export const createLeave = async (req, res) => {
       }
     }
 
+    // Relief officer — the peer who covers this employee's duties while
+    // they're out. Optional unless the tenant has turned on
+    // requireReliefOfficer (see leavePolicy on Tenant), in which case it's
+    // mandatory and gates the approval chain (see updateLeaveStatus below).
+    // Whenever one is provided, it must be a same-tenant, same-department
+    // colleague other than the requester themselves.
+    const requireRelief = !!tenant?.leavePolicy?.requireReliefOfficer;
+    if (requireRelief && !reliefOfficer) {
+      return res.status(400).json({ success: false, message: 'A relief officer is required for leave requests at this organisation.' });
+    }
+    let reliefOfficerEmp = null;
+    if (reliefOfficer) {
+      reliefOfficerEmp = await Employee.findOne({ _id: reliefOfficer, tenantId: tid });
+      if (!reliefOfficerEmp)
+        return res.status(404).json({ success: false, message: 'Relief officer not found in this organisation.' });
+      if (reliefOfficerEmp._id.toString() === emp._id.toString())
+        return res.status(400).json({ success: false, message: 'The relief officer must be a different employee.' });
+      if (String(reliefOfficerEmp.departmentId || '') !== String(emp.departmentId || ''))
+        return res.status(400).json({ success: false, message: 'The relief officer must be in the same department.' });
+    }
+
     const leave = await Leave.create({
       employeeId, tenantId: tid, type,
       startDate: start, endDate: end,
@@ -131,11 +162,18 @@ export const createLeave = async (req, res) => {
       .populate({ path: 'employeeId', select: 'name role departmentId', populate: { path: 'departmentId', select: 'name' } })
       .populate('reliefOfficer', 'name');
 
-    // Fire-and-forget – notify whoever acts first: the employee's manager if
-    // they have one, otherwise HR (mirrors the KPI review fallback).
+    // Fire-and-forget – notify whoever acts first. If a relief officer step
+    // is in play (required by policy and one was picked), they go first;
+    // otherwise this falls back to the original manager-then-HR routing.
     const notifTitle = 'New leave request';
     const notifMessage = `${emp.name} requested ${workingDays} day(s) of ${type} leave (${fmtDate(start)} – ${fmtDate(end)}).`;
-    if (emp.managerId) {
+    if (requireRelief && reliefOfficerEmp) {
+      notify({ tenantId: tid, recipientId: reliefOfficerEmp._id, recipientModel: 'Employee', type: 'leave', title: `You're the relief officer for ${emp.name}'s leave request`, message: notifMessage, link: 'leaves' });
+      if (reliefOfficerEmp.email) {
+        const tpl = leaveRequested({ employeeName: emp.name, leaveType: type, startDate: fmtDate(start), endDate: fmtDate(end), workingDays, reason });
+        sendEmail({ to: reliefOfficerEmp.email, ...tpl }).catch(err => console.error('Email failed:', err.message));
+      }
+    } else if (emp.managerId) {
       Employee.findOne({ _id: emp.managerId, tenantId: tid }).select('name email')
         .then(manager => {
           if (!manager) return;
@@ -166,19 +204,21 @@ export const createLeave = async (req, res) => {
 };
 
 // PUT /api/leaves/:id
-// Two-step approval: the employee's direct manager gives the first sign-off
-// (Pending -> Manager Approved), then HR gives the final sign-off
-// (Manager Approved -> HR Approved -> Processed). If the employee has no
-// manager, HR can approve directly from Pending — same fallback pattern as
-// the KPI review chain. Reject is allowed from Pending or Manager Approved,
-// by either the manager or HR.
+// Up to three-step approval: an optional relief officer sign-off first
+// (Pending -> Relief Officer Approved) — only in play when the tenant has
+// requireReliefOfficer on AND this request actually has one assigned — then
+// the employee's direct manager (-> Manager Approved), then HR's final
+// sign-off (-> HR Approved -> Processed). If the employee has no manager,
+// HR can approve directly from whatever step it's at — same fallback
+// pattern as the KPI review chain. Reject is allowed from any pre-HR-
+// approval step, by whoever holds that step (relief officer, manager) or HR.
 export const updateLeaveStatus = async (req, res) => {
   try {
     const tid = req.tenantId;
     const { status } = req.body;
     const isHR = req.userRole !== 'Employee';
 
-    const validStatuses = ['Manager Approved', 'HR Approved', 'Rejected', 'Processed'];
+    const validStatuses = ['Relief Officer Approved', 'Manager Approved', 'HR Approved', 'Rejected', 'Processed'];
     if (!validStatuses.includes(status))
       return res.status(400).json({ success: false, message: `Status must be one of: ${validStatuses.join(', ')}.` });
 
@@ -187,16 +227,32 @@ export const updateLeaveStatus = async (req, res) => {
 
     const emp = await Employee.findOne({ _id: leave.employeeId, tenantId: tid });
     const isManager = !isHR && emp?.managerId?.toString() === req.user._id.toString();
+    const isReliefOfficer = !isHR && leave.reliefOfficer?.toString() === req.user._id.toString();
 
-    if (!isHR && !isManager)
-      return res.status(403).json({ success: false, message: "Only the employee's manager or HR can update this leave request." });
+    if (!isHR && !isManager && !isReliefOfficer)
+      return res.status(403).json({ success: false, message: "Only the employee's relief officer, manager, or HR can update this leave request." });
 
-    if (status === 'Manager Approved') {
+    const tenant = await Tenant.findById(tid).select('leavePolicy');
+    // The relief-officer step only actually gates the chain if the tenant
+    // has turned it on AND this specific request has one assigned — a
+    // request with no relief officer (or a tenant that never required one)
+    // skips straight to the manager step, same as always.
+    const reliefGates = !!tenant?.leavePolicy?.requireReliefOfficer && !!leave.reliefOfficer;
+
+    if (status === 'Relief Officer Approved') {
+      if (!isReliefOfficer && !isHR)
+        return res.status(403).json({ success: false, message: 'Only the assigned relief officer or HR can give this approval.' });
       if (leave.status !== 'Pending')
-        return res.status(400).json({ success: false, message: `Cannot give manager approval from status "${leave.status}".` });
+        return res.status(400).json({ success: false, message: `Cannot give relief officer approval from status "${leave.status}".` });
+    } else if (status === 'Manager Approved') {
+      if (!isManager && !isHR)
+        return res.status(403).json({ success: false, message: "Only the employee's manager or HR can give this approval." });
+      const allowedFrom = reliefGates ? ['Relief Officer Approved'] : ['Pending'];
+      if (!allowedFrom.includes(leave.status))
+        return res.status(400).json({ success: false, message: reliefGates ? `This request needs relief officer approval first (currently "${leave.status}").` : `Cannot give manager approval from status "${leave.status}".` });
     } else if (status === 'HR Approved') {
       if (!isHR) return res.status(403).json({ success: false, message: 'Only HR can give final approval.' });
-      const allowedFrom = emp?.managerId ? ['Manager Approved'] : ['Pending', 'Manager Approved'];
+      const allowedFrom = emp?.managerId ? ['Manager Approved'] : ['Pending', 'Relief Officer Approved', 'Manager Approved'];
       if (!allowedFrom.includes(leave.status))
         return res.status(400).json({ success: false, message: `This request needs manager approval first (currently "${leave.status}").` });
     } else if (status === 'Processed') {
@@ -204,7 +260,7 @@ export const updateLeaveStatus = async (req, res) => {
       if (leave.status !== 'HR Approved')
         return res.status(400).json({ success: false, message: `Cannot mark processed from status "${leave.status}".` });
     } else if (status === 'Rejected') {
-      if (!['Pending', 'Manager Approved'].includes(leave.status))
+      if (!['Pending', 'Relief Officer Approved', 'Manager Approved'].includes(leave.status))
         return res.status(400).json({ success: false, message: `Cannot reject from status "${leave.status}".` });
     }
 
@@ -216,7 +272,21 @@ export const updateLeaveStatus = async (req, res) => {
       .populate('reliefOfficer', 'name');
 
     // Fire-and-forget – notify whoever needs to know next
-    if (status === 'Manager Approved') {
+    if (status === 'Relief Officer Approved') {
+      // Tell the manager it's ready for their sign-off, or HR if there's no manager
+      const notifTitle = 'Leave ready for manager approval';
+      const notifMessage = `${populated.employeeId?.name || 'An employee'}'s ${leave.type} leave was approved by their relief officer and needs your sign-off.`;
+      if (emp?.managerId) {
+        Employee.findOne({ _id: emp.managerId, tenantId: tid }).select('name email')
+          .then(manager => {
+            if (!manager) return;
+            notify({ tenantId: tid, recipientId: manager._id, recipientModel: 'Employee', type: 'leave', link: 'leaves', title: notifTitle, message: notifMessage });
+          })
+          .catch(err => console.error('Manager lookup failed:', err.message));
+      } else {
+        notifyHrAdmins(User, tid, { type: 'leave', link: 'leaves', title: notifTitle, message: notifMessage });
+      }
+    } else if (status === 'Manager Approved') {
       // Tell HR it's ready for final sign-off
       notifyHrAdmins(User, tid, {
         type: 'leave', link: 'leaves',

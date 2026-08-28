@@ -31,7 +31,7 @@ const leaveSchema = new mongoose.Schema({
   },
   status: {
     type: String,
-    enum: ['Pending', 'Manager Approved', 'HR Approved', 'Rejected', 'Processed'],
+    enum: ['Pending', 'Relief Officer Approved', 'Manager Approved', 'HR Approved', 'Rejected', 'Processed'],
     default: 'Pending'
   },
   reason: {
