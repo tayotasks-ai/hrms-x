@@ -75,6 +75,61 @@ export const createPayslip = async (req, res) => {
   }
 };
 
+// POST /api/payslips/bulk-generate  – HR only.
+// Creates one Draft payslip per active (non-Offboarded) employee for the
+// given period, using each employee's stored salary as basicSalary with 0
+// allowances/otherDeductions — HR can open individual slips afterward to
+// adjust before finalizing/paying. Anyone who already has a payslip for
+// this period is skipped, not overwritten (createPayslip's own
+// employeeId+period unique index would reject a duplicate anyway; this
+// checks up front so we can report a clean skipped list instead of a pile
+// of individual 409s).
+export const bulkGeneratePayslips = async (req, res) => {
+  try {
+    const tid = req.tenantId;
+    const period = (req.body?.period || '').trim();
+    if (!period) return res.status(400).json({ success: false, message: 'period is required.' });
+
+    const [employees, existing] = await Promise.all([
+      Employee.find({ tenantId: tid, status: { $ne: 'Offboarded' } }).select('name salary'),
+      Payslip.find({ tenantId: tid, period }).select('employeeId'),
+    ]);
+    const existingIds = new Set(existing.map(p => p.employeeId.toString()));
+
+    const created = [];
+    const skipped = [];
+
+    for (const emp of employees) {
+      if (existingIds.has(emp._id.toString())) {
+        skipped.push({ employeeId: emp._id, name: emp.name });
+        continue;
+      }
+
+      const basicSalary = emp.salary || 0;
+      const { grossPay, deductions, netPay } = calculateNigerianPayroll({
+        basicSalary, allowances: 0, otherDeductions: 0,
+      });
+
+      const payslip = await Payslip.create({
+        employeeId: emp._id, tenantId: tid, period,
+        basicSalary, allowances: 0,
+        deductions, grossPay, netPay,
+        payslipType: 'Regular',
+        status: 'Draft',
+      });
+      created.push({ employeeId: emp._id, name: emp.name, payslipId: payslip._id });
+    }
+
+    res.status(201).json({
+      success: true,
+      message: `Generated ${created.length} draft payslip(s) for ${period}.${skipped.length ? ` Skipped ${skipped.length} employee(s) who already have one.` : ''}`,
+      data: { created, skipped },
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+};
+
 // GET /api/payslips/remittance?period=<period>&type=paye|pension|nhf – HR only.
 // CSV export of one payroll period's statutory deductions, one file per
 // filing body: PAYE -> FIRS, Pension -> PenCom, NHF -> Federal Mortgage

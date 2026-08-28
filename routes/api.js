@@ -10,7 +10,7 @@ import { loginUser, changePassword, forgotPassword, resetPassword, verifyLoginOt
 import { getDashboardStats } from '../controllers/dashboardController.js';
 import { getEmployees, getEmployee, createEmployee, bulkCreateEmployees, updateEmployee, getMe, updateEmployeeManager, getDirectoryLite } from '../controllers/employeeController.js';
 import { getLeaves, createLeave, updateLeaveStatus, getLeavePolicy, updateLeavePolicy } from '../controllers/leaveController.js';
-import { getPayslips, createPayslip, getPayslipPdf, getRemittanceReport } from '../controllers/payslipController.js';
+import { getPayslips, createPayslip, bulkGeneratePayslips, getPayslipPdf, getRemittanceReport } from '../controllers/payslipController.js';
 import { getKpis, createKpi, updateKpi, submitSelfReview, submitManagerReview, getKpiSummary } from '../controllers/kpiController.js';
 import { getPerformanceCycles, createPerformanceCycle, updatePerformanceCycle } from '../controllers/performanceCycleController.js';
 import { getCompliances, createCompliance, seedDefaults, updateCompliance } from '../controllers/complianceController.js';
@@ -153,6 +153,7 @@ router.put('/leave-policy', hrOnly, updateLeavePolicy);
 // Payroll
 router.get('/payslips', getPayslips);
 router.post('/payslips', hrOnly, createPayslip);
+router.post('/payslips/bulk-generate', hrOnly, bulkGeneratePayslips);
 router.get('/payslips/remittance', hrOnly, getRemittanceReport);
 router.get('/payslips/:id/pdf', getPayslipPdf);
 router.post('/payslips/pay-batch', hrOnly, payBatch);
