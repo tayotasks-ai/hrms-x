@@ -51,26 +51,25 @@ export const setupWallet = async (req, res) => {
     const phone = (req.body?.phone || '').trim();
     if (!phone) return res.status(400).json({ success: false, message: 'A phone number is required to set up the payroll wallet (Paystack needs it to issue the dedicated account).' });
 
+    const nameParts = String(tenant.name || 'Company').trim().split(/\s+/);
+    const firstName = nameParts[0] || 'Company';
+    const lastName = nameParts.slice(1).join(' ') || tenant.name || 'Wallet';
+
     try {
       let customerCode = tenant.wallet?.paystackCustomerCode;
       if (!customerCode) {
-        const nameParts = String(tenant.name || 'Company').trim().split(/\s+/);
-        const customer = await createCustomer(secretKey, {
-          email: actorEmail,
-          firstName: nameParts[0] || 'Company',
-          lastName: nameParts.slice(1).join(' ') || tenant.name || 'Wallet',
-          phone,
-        });
+        const customer = await createCustomer(secretKey, { email: actorEmail, firstName, lastName, phone });
         customerCode = customer.customerCode;
       } else {
         // Customer already existed (e.g. from an earlier attempt before
-        // phone was collected) — make sure it actually has the phone Paystack
-        // now requires before retrying dedicated-account creation.
-        await updateCustomerPhone(secretKey, { customerCode, phone });
+        // phone was collected) — patch it directly too, though the belt-
+        // and-suspenders fix is passing these into createDedicatedAccount
+        // below, which is what Paystack's docs actually recommend.
+        await updateCustomerPhone(secretKey, { customerCode, phone }).catch(err => console.error('Customer phone update failed:', err.message));
       }
 
       const preferredBank = process.env.PAYSTACK_DVA_PREFERRED_BANK || 'wema-bank';
-      const account = await createDedicatedAccount(secretKey, { customerCode, preferredBank });
+      const account = await createDedicatedAccount(secretKey, { customerCode, preferredBank, firstName, lastName, phone });
 
       const updated = await Tenant.findByIdAndUpdate(
         tid,

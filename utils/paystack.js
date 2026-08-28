@@ -79,10 +79,20 @@ export const createCustomer = async (secretKey, { email, firstName, lastName, ph
 // platform's Paystack integration to have Dedicated NUBAN enabled; if it
 // isn't, Paystack returns an error here that the caller should surface
 // as-is rather than retry.
-export const createDedicatedAccount = async (secretKey, { customerCode, preferredBank }) => {
+//
+// firstName/lastName/phone are optional but important: Paystack's own docs
+// (docs/api/dedicated-virtual-account #create) say to pass them here
+// directly when the customer record doesn't already have them — this is
+// the documented fix for "Customer phone number is required", and is more
+// reliable than relying solely on a separate customer-update call landing
+// before this request.
+export const createDedicatedAccount = async (secretKey, { customerCode, preferredBank, firstName, lastName, phone }) => {
   const res = await request(secretKey, 'POST', '/dedicated_account', {
     customer: customerCode,
     preferred_bank: preferredBank,
+    ...(firstName ? { first_name: firstName } : {}),
+    ...(lastName ? { last_name: lastName } : {}),
+    ...(phone ? { phone } : {}),
   });
   return {
     accountNumber: res.data.account_number,
