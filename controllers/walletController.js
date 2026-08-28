@@ -8,7 +8,7 @@ import { recordAudit } from '../utils/auditLog.js';
 // Wallet tab can render in a single request.
 export const getWallet = async (req, res) => {
   try {
-    const tenant = await Tenant.findById(req.tenantId).select('wallet payrollSchedule name');
+    const tenant = await Tenant.findById(req.tenantId).select('wallet payrollSchedule name isTestAccount');
     res.json({
       success: true,
       data: {
@@ -16,6 +16,7 @@ export const getWallet = async (req, res) => {
         dedicatedAccount: tenant?.wallet?.dedicatedAccount?.active ? tenant.wallet.dedicatedAccount : null,
         requireDualApproval: !!tenant?.wallet?.requireDualApproval,
         payrollSchedule: tenant?.payrollSchedule || { dayOfMonth: 25, useLastDayOfMonth: false, active: false },
+        isTestAccount: !!tenant?.isTestAccount,
       },
     });
   } catch (err) {

@@ -43,9 +43,10 @@ const runPayrollForTenant = async (tenant) => {
   if (payslips.length === 0) return;
 
   const actor = { id: admin._id, name: `${admin.name} (scheduled payroll)`, model: 'User' };
+  const isTestAccount = !!tenant.isTestAccount;
   const results = [];
   for (const payslip of payslips) {
-    results.push(await payOnePayslip(payslip, secretKey, tid, actor));
+    results.push(await payOnePayslip(payslip, secretKey, tid, actor, { isTestAccount }));
   }
 
   const succeeded = results.filter(r => r.ok).length;
@@ -72,7 +73,7 @@ export const startPayrollScheduler = (agenda) => {
     const lastDay = isLastDayOfMonth(today);
 
     const tenants = await Tenant.find({ 'payrollSchedule.active': true })
-      .select('payrollSchedule');
+      .select('payrollSchedule isTestAccount');
 
     for (const tenant of tenants) {
       const sched = tenant.payrollSchedule;

@@ -1,5 +1,6 @@
 import PayrollApproval from '../models/PayrollApproval.js';
 import Payslip from '../models/Payslip.js';
+import Tenant from '../models/Tenant.js';
 import User from '../models/User.js';
 import { getPlatformSecretKey } from '../utils/paystack.js';
 import { payOnePayslip } from './payslipPaymentController.js';
@@ -43,12 +44,13 @@ export const approvePayrollApproval = async (req, res) => {
     try { secretKey = getPlatformSecretKey(); }
     catch (err) { return res.status(503).json({ success: false, message: err.message }); }
     const actor = { id: req.user._id, name: req.user.name, model: 'User' };
+    const tenant = await Tenant.findById(tid).select('isTestAccount');
 
     const results = [];
     for (const payslipId of approval.payslipIds) {
       const payslip = await Payslip.findOne({ _id: payslipId, tenantId: tid });
       if (!payslip) { results.push({ payslipId, ok: false, message: 'Payslip not found.' }); continue; }
-      const result = await payOnePayslip(payslip, secretKey, tid, actor);
+      const result = await payOnePayslip(payslip, secretKey, tid, actor, { isTestAccount: !!tenant?.isTestAccount });
       results.push({ payslipId, ok: result.ok, status: result.status, message: result.message, insufficientBalance: result.insufficientBalance });
     }
 
