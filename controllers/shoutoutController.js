@@ -1,5 +1,6 @@
 import Shoutout from '../models/Shoutout.js';
 import Employee from '../models/Employee.js';
+import { notify } from '../utils/notify.js';
 
 // GET /api/shoutouts  – most recent first
 export const getShoutouts = async (req, res) => {
@@ -45,6 +46,22 @@ export const createShoutout = async (req, res) => {
     });
 
     const populated = await Shoutout.findById(shoutout._id).populate('toEmployeeIds', 'name role');
+
+    // Recipients weren't seeing shoutouts anywhere but the shoutouts feed
+    // itself — surface it as an in-app notification too, same pattern as
+    // every other "something happened to you" event in this app.
+    toEmployeeIds.forEach(empId => {
+      notify({
+        tenantId: tid,
+        recipientId: empId,
+        recipientModel: 'Employee',
+        type: 'shoutout',
+        link: 'dashboard',
+        title: 'You got a shoutout! 🎉',
+        message: `${req.user.name}: "${message.trim()}"`,
+      });
+    });
+
     res.status(201).json({ success: true, message: 'Shoutout posted.', data: populated });
   } catch (err) {
     res.status(500).json({ success: false, message: err.message });
