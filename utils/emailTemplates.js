@@ -343,3 +343,25 @@ export const kpiSignedOff = ({ employeeName, kpiTitle, finalScore }) => ({
     ${para('Log in to your WorkDesk portal to see the full review.')}
   `)
 });
+
+// ─── 18. Platform Support Impersonation (sent to every HR Admin on the tenant) ───
+// Real-time email counterpart to the in-app notification fired from the same
+// call site — see platformController.js impersonateTenant. Not a gate on
+// access (that would let a non-responsive admin block urgent support), just
+// immediate transparency into the fact it happened, by whom, and why.
+export const impersonationAccessed = ({ adminName, tenantName, platformAdminName, reason, expiresAt }) => ({
+  subject: `Platform support accessed your WorkDesk account`,
+  html: wrap(`
+    ${heading('Platform Support Access ⚠️')}
+    ${para(`Hi <strong>${adminName}</strong>,`)}
+    ${para(`A WorkDesk platform support admin just logged into <strong>${tenantName}</strong>'s HR Admin account.`)}
+    ${divider()}
+    <table style="width:100%;font-size:14px;color:#4b5563;">
+      <tr><td style="padding:6px 0;font-weight:600;">Support Admin</td><td>${platformAdminName}</td></tr>
+      <tr><td style="padding:6px 0;font-weight:600;">Reason Given</td><td>${reason}</td></tr>
+      <tr><td style="padding:6px 0;font-weight:600;">Session Expires</td><td>${expiresAt}</td></tr>
+    </table>
+    ${divider()}
+    ${para("This is standard practice when you need help from support, but if you didn't expect this or have concerns, check the Audit Log in your WorkDesk dashboard for the full trail.")}
+  `)
+});

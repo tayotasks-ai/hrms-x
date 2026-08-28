@@ -6,6 +6,8 @@ import User from '../models/User.js';
 import Employee from '../models/Employee.js';
 import { PLAN_PRICE_PER_EMPLOYEE } from './tenantController.js';
 import { notifyHrAdmins } from '../utils/notify.js';
+import { sendEmail } from '../utils/email.js';
+import { impersonationAccessed } from '../utils/emailTemplates.js';
 
 const generatePlatformToken = (id) =>
   jwt.sign({ id, type: 'platform' }, process.env.JWT_SECRET, { expiresIn: '12h' });
@@ -215,6 +217,25 @@ export const impersonateTenant = async (req, res) => {
       message: `${req.platformAdmin.name} (HRMS X platform support) logged in as your HR Admin account for support purposes. Reason given: "${reason}". This session expires in 45 minutes.`,
       link: 'audit-log',
     }).catch(err => console.error('Impersonation notification failed:', err.message));
+
+    // Same audience, via email — seen immediately rather than only on next
+    // login/notification-bell check. Deliberately not awaited/blocking: an
+    // admin who doesn't see this right away shouldn't be able to stall
+    // urgent support access, it's disclosure, not an approval gate.
+    User.find({ tenantId: tenant._id, role: 'HR_Admin' }).select('name email')
+      .then(hrAdmins => {
+        hrAdmins.filter(a => a.email).forEach(a => {
+          const tpl = impersonationAccessed({
+            adminName: a.name,
+            tenantName: tenant.name,
+            platformAdminName: req.platformAdmin.name,
+            reason,
+            expiresAt: expiresAt.toLocaleString('en-NG', { dateStyle: 'medium', timeStyle: 'short' }),
+          });
+          sendEmail({ to: a.email, ...tpl }).catch(err => console.error('Impersonation email failed:', err.message));
+        });
+      })
+      .catch(err => console.error('HR admin lookup for impersonation email failed:', err.message));
 
     res.json({
       success: true,
