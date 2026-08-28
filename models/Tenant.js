@@ -28,6 +28,13 @@ const tenantSchema = new mongoose.Schema({
     freeEmployeeLimit: { type: Number, default: 5, min: 1 },
     upgradedAt: { type: Date },
   },
+  // Platform-admin-only override for orgs helping us test the product.
+  // Exempts the tenant from the free-tier seat cap (treated like Paid in
+  // computeRemainingSeats, employeeController.js) regardless of plan.tier,
+  // so testers aren't blocked by billing while trying things out. Settable
+  // only from the root/platform dashboard (platformController.js) — no
+  // tenant-facing UI exposes this, by design.
+  isTestAccount: { type: Boolean, default: false },
   // Payroll wallet — replaces the old per-tenant "bring your own Paystack
   // key" model. Every tenant funds THIS wallet (by transferring into their
   // own dedicated virtual account) and every payroll transfer is disbursed

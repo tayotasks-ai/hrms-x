@@ -41,7 +41,7 @@ import { exportMyData, createDsarRequest, getDsarRequests, updateDsarRequest } f
 import { getRetentionSettings, updateRetentionSettings, getRetentionCandidates, anonymizeEmployee } from '../controllers/retentionController.js';
 import { pingActivity, getMyActivity, getTeamActivity } from '../controllers/activityController.js';
 import { getMonitoringSettings, updateMonitoringSettings, setMonitoringConsent, uploadScreenshot, getScreenshots, getScreenshotImage, deleteScreenshot } from '../controllers/monitoringController.js';
-import { platformLogin, listTenants, getTenantDetail, impersonateTenant } from '../controllers/platformController.js';
+import { platformLogin, listTenants, getTenantDetail, impersonateTenant, setTenantTestAccount } from '../controllers/platformController.js';
 
 const router = express.Router();
 
@@ -65,6 +65,7 @@ router.post('/platform/login', authLimiter, platformLogin);
 router.get('/platform/tenants', protectPlatform, listTenants);
 router.get('/platform/tenants/:id', protectPlatform, getTenantDetail);
 router.post('/platform/tenants/:id/impersonate', protectPlatform, impersonateTenant);
+router.patch('/platform/tenants/:id/test-account', protectPlatform, setTenantTestAccount);
 
 // ── All authenticated routes require protect middleware ────────────────────────
 router.use(protect);

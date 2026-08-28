@@ -17,18 +17,21 @@ const escapeRegex = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 // Freemium seat cap — pure decision logic (no DB access), kept separate from
 // getRemainingSeats below so it's directly unit-testable. Paid tenants have
 // no cap; Free tenants are limited to `limit` non-offboarded employees.
-export const computeRemainingSeats = (tier, limit, currentCount) => {
-  if (tier === 'Paid') return Infinity;
+// isTestAccount is a platform-admin-only override (set from the root/platform
+// dashboard for orgs helping test the product) that behaves like Paid: no cap,
+// regardless of what tier the tenant is actually on.
+export const computeRemainingSeats = (tier, limit, currentCount, isTestAccount = false) => {
+  if (tier === 'Paid' || isTestAccount) return Infinity;
   return Math.max(0, (limit ?? 5) - currentCount);
 };
 
 // Fetches the tenant's plan + current (non-offboarded) headcount and applies
 // computeRemainingSeats. Offboarded employees don't count against headcount.
 const getRemainingSeats = async (tid) => {
-  const tenant = await Tenant.findById(tid).select('plan');
+  const tenant = await Tenant.findById(tid).select('plan isTestAccount');
   const limit = tenant?.plan?.freeEmployeeLimit ?? 5;
   const count = await Employee.countDocuments({ tenantId: tid, status: { $ne: 'Offboarded' } });
-  return { remaining: computeRemainingSeats(tenant?.plan?.tier, limit, count), limit };
+  return { remaining: computeRemainingSeats(tenant?.plan?.tier, limit, count, tenant?.isTestAccount), limit };
 };
 
 // Ensures an employee marked 'Onboarding' has a matching Onboarding record,

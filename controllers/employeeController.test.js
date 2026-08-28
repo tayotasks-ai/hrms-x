@@ -37,4 +37,14 @@ describe('computeRemainingSeats', () => {
   it('respects a non-default limit if one is configured', () => {
     expect(computeRemainingSeats('Free', 10, 7)).toBe(3);
   });
+
+  it('a Free tenant flagged isTestAccount is uncapped, same as Paid', () => {
+    expect(computeRemainingSeats('Free', 5, 5, true)).toBe(Infinity);
+    expect(computeRemainingSeats('Free', 5, 500, true)).toBe(Infinity);
+  });
+
+  it('isTestAccount defaults to false and does not affect normal Free tenants', () => {
+    expect(computeRemainingSeats('Free', 5, 5)).toBe(0);
+    expect(computeRemainingSeats('Free', 5, 5, false)).toBe(0);
+  });
 });

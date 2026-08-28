@@ -85,6 +85,7 @@ export const listTenants = async (req, res) => {
           slug: t.slug,
           createdAt: t.createdAt,
           planTier: t.plan?.tier || 'Free',
+          isTestAccount: !!t.isTestAccount,
           employeeCount,
           pricePerEmployee: PLAN_PRICE_PER_EMPLOYEE,
           walletBalance: t.wallet?.balance || 0,
@@ -127,6 +128,7 @@ export const getTenantDetail = async (req, res) => {
         slug: tenant.slug,
         createdAt: tenant.createdAt,
         plan: tenant.plan,
+        isTestAccount: !!tenant.isTestAccount,
         pricePerEmployee: PLAN_PRICE_PER_EMPLOYEE,
         wallet: tenant.wallet,
         payrollSchedule: tenant.payrollSchedule,
@@ -135,6 +137,27 @@ export const getTenantDetail = async (req, res) => {
         onboarding,
       },
     });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+};
+
+// PATCH /api/platform/tenants/:id/test-account – protectPlatform only.
+// Flips the isTestAccount flag (see models/Tenant.js) so a tenant helping us
+// test the product is exempt from the free-tier seat cap regardless of
+// plan.tier — see computeRemainingSeats in employeeController.js. There is
+// no tenant-facing UI for this; it's a root-dashboard-only override.
+export const setTenantTestAccount = async (req, res) => {
+  try {
+    const { isTestAccount } = req.body;
+    const tenant = await Tenant.findByIdAndUpdate(
+      req.params.id,
+      { isTestAccount: !!isTestAccount },
+      { new: true }
+    ).select('name isTestAccount');
+    if (!tenant) return res.status(404).json({ success: false, message: 'Tenant not found.' });
+
+    res.json({ success: true, data: { _id: tenant._id, isTestAccount: tenant.isTestAccount } });
   } catch (err) {
     res.status(500).json({ success: false, message: err.message });
   }

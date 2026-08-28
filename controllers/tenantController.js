@@ -68,7 +68,7 @@ export const getTenantPlan = async (req, res) => {
   try {
     const tid = req.tenantId;
     const [tenant, employeeCount] = await Promise.all([
-      Tenant.findById(tid).select('plan'),
+      Tenant.findById(tid).select('plan isTestAccount'),
       Employee.countDocuments({ tenantId: tid, status: { $ne: 'Offboarded' } }),
     ]);
     res.json({
@@ -80,6 +80,7 @@ export const getTenantPlan = async (req, res) => {
         upgradedAt: tenant?.plan?.upgradedAt || null,
         pricePerEmployee: PLAN_PRICE_PER_EMPLOYEE,
         estimatedMonthlyCost: employeeCount * PLAN_PRICE_PER_EMPLOYEE,
+        isTestAccount: !!tenant?.isTestAccount,
       },
     });
   } catch (err) {
