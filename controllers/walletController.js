@@ -1,6 +1,6 @@
 import Tenant from '../models/Tenant.js';
 import WalletTransaction from '../models/WalletTransaction.js';
-import { getPlatformSecretKey, createCustomer, createDedicatedAccount, PaystackError } from '../utils/paystack.js';
+import { getPlatformSecretKey, createCustomer, createDedicatedAccount, updateCustomerPhone, PaystackError } from '../utils/paystack.js';
 import { recordAudit } from '../utils/auditLog.js';
 
 // GET /api/wallet — HR only. Balance, dedicated account (if set up), and
@@ -45,6 +45,12 @@ export const setupWallet = async (req, res) => {
     const actorEmail = req.user.email;
     if (!actorEmail) return res.status(400).json({ success: false, message: 'The HR admin setting this up needs an email address on file.' });
 
+    // Paystack requires a phone number to issue a Dedicated NUBAN — the
+    // User model has no phone field, so this has to be collected here,
+    // one-time, from whoever sets the wallet up.
+    const phone = (req.body?.phone || '').trim();
+    if (!phone) return res.status(400).json({ success: false, message: 'A phone number is required to set up the payroll wallet (Paystack needs it to issue the dedicated account).' });
+
     try {
       let customerCode = tenant.wallet?.paystackCustomerCode;
       if (!customerCode) {
@@ -53,9 +59,14 @@ export const setupWallet = async (req, res) => {
           email: actorEmail,
           firstName: nameParts[0] || 'Company',
           lastName: nameParts.slice(1).join(' ') || tenant.name || 'Wallet',
-          phone: req.user.phone || undefined,
+          phone,
         });
         customerCode = customer.customerCode;
+      } else {
+        // Customer already existed (e.g. from an earlier attempt before
+        // phone was collected) — make sure it actually has the phone Paystack
+        // now requires before retrying dedicated-account creation.
+        await updateCustomerPhone(secretKey, { customerCode, phone });
       }
 
       const preferredBank = process.env.PAYSTACK_DVA_PREFERRED_BANK || 'wema-bank';

@@ -93,6 +93,16 @@ export const createDedicatedAccount = async (secretKey, { customerCode, preferre
   };
 };
 
+// Attaches/updates a phone number on an existing customer. Needed because
+// customer creation itself doesn't require a phone, but Paystack rejects
+// dedicated-account creation for a customer that doesn't have one — so a
+// customer created before a phone was collected (or before this field
+// existed at all) needs to be patched before retrying /dedicated_account.
+export const updateCustomerPhone = async (secretKey, { customerCode, phone }) => {
+  const res = await request(secretKey, 'PUT', `/customer/${customerCode}`, { phone });
+  return { customerCode: res.data.customer_code };
+};
+
 // Which banks can currently issue a dedicated virtual account on this
 // integration — used to pick/validate PAYSTACK_DVA_PREFERRED_BANK.
 export const listDvaProviders = async (secretKey) => {
