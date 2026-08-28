@@ -18,7 +18,14 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 dotenv.config({ path: path.resolve(__dirname, '../.env') });
 
 const resend = new Resend(process.env.RESEND_API_KEY);
-const defaultFromEmail = process.env.FROM_EMAIL || 'hrms-x@kumutech.com.ng';
+
+// Keep whatever address is actually verified with Resend (changing it here
+// would risk breaking deliverability without a matching domain/DNS change),
+// but always show "WorkDesk" as the display name in the recipient's inbox
+// rather than the old "HRMS X" branding or a bare address.
+const rawFromEmail = process.env.FROM_EMAIL || 'hrms-x@kumutech.com.ng';
+const bareFromAddress = (rawFromEmail.match(/<(.+)>/) || [, rawFromEmail])[1];
+const defaultFromEmail = `WorkDesk <${bareFromAddress}>`;
 
 /**
  * Send an email using Resend

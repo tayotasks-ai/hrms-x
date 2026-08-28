@@ -1,5 +1,5 @@
 /**
- * Centralised email templates for HRMS-X
+ * Centralised email templates for WorkDesk
  * Each function returns { subject, html } ready for sendEmail()
  */
 
@@ -8,14 +8,17 @@ const wrap = (body) => `
 <!DOCTYPE html>
 <html lang="en">
 <head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"></head>
-<body style="margin:0;padding:0;background:#f4f6f8;font-family:'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
-  <table width="100%" cellpadding="0" cellspacing="0" style="background:#f4f6f8;padding:32px 0;">
+<body style="margin:0;padding:0;background:#f4f5f2;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
+  <table width="100%" cellpadding="0" cellspacing="0" style="background:#f4f5f2;padding:32px 0;">
     <tr><td align="center">
       <table width="600" cellpadding="0" cellspacing="0" style="background:#ffffff;border-radius:12px;overflow:hidden;box-shadow:0 2px 8px rgba(0,0,0,0.06);">
         <!-- Header -->
         <tr>
-          <td style="background:linear-gradient(135deg,#6366f1,#8b5cf6);padding:28px 32px;">
-            <h1 style="margin:0;color:#ffffff;font-size:22px;font-weight:700;letter-spacing:-0.3px;">HRMS-X</h1>
+          <td style="background:#0a0a0a;padding:24px 32px;">
+            <table cellpadding="0" cellspacing="0" border="0"><tr>
+              <td style="background:#84cc16;width:32px;height:32px;min-width:32px;border-radius:8px;text-align:center;vertical-align:middle;font-family:Arial,Helvetica,sans-serif;font-weight:800;font-size:13px;color:#0a0a0a;">WD</td>
+              <td style="padding-left:10px;color:#ffffff;font-size:18px;font-weight:700;letter-spacing:1px;text-transform:uppercase;font-family:Arial,Helvetica,sans-serif;">WorkDesk</td>
+            </tr></table>
           </td>
         </tr>
         <!-- Body -->
@@ -26,9 +29,9 @@ const wrap = (body) => `
         </tr>
         <!-- Footer -->
         <tr>
-          <td style="padding:20px 32px;background:#f9fafb;border-top:1px solid #e5e7eb;">
+          <td style="padding:20px 32px;background:#fafafa;border-top:1px solid #e5e7eb;">
             <p style="margin:0;font-size:12px;color:#9ca3af;text-align:center;">
-              This is an automated notification from HRMS-X. Please do not reply to this email.
+              This is an automated notification from WorkDesk. Please do not reply to this email.
             </p>
           </td>
         </tr>
@@ -40,7 +43,7 @@ const wrap = (body) => `
 
 // ─── Helper ─────────────────────────────────────────────────────────────────
 const btn = (label, url) =>
-  `<a href="${url}" style="display:inline-block;margin-top:16px;padding:12px 28px;background:#6366f1;color:#ffffff;text-decoration:none;border-radius:8px;font-weight:600;font-size:14px;">${label}</a>`;
+  `<a href="${url}" style="display:inline-block;margin-top:16px;padding:12px 28px;background:#84cc16;color:#0a0a0a;text-decoration:none;border-radius:8px;font-weight:700;font-size:14px;">${label}</a>`;
 
 const heading = (text) =>
   `<h2 style="margin:0 0 16px;font-size:20px;color:#1f2937;">${text}</h2>`;
@@ -48,7 +51,7 @@ const heading = (text) =>
 const para = (text) =>
   `<p style="margin:0 0 12px;font-size:15px;color:#4b5563;line-height:1.6;">${text}</p>`;
 
-const badge = (text, color = '#6366f1') =>
+const badge = (text, color = '#65a30d') =>
   `<span style="display:inline-block;padding:4px 12px;background:${color}15;color:${color};border-radius:6px;font-size:13px;font-weight:600;">${text}</span>`;
 
 const divider = () =>
@@ -56,11 +59,11 @@ const divider = () =>
 
 // ─── 1. Welcome Tenant ─────────────────────────────────────────────────────
 export const welcomeTenant = ({ orgName, adminName, adminEmail }) => ({
-  subject: `Welcome to HRMS-X – ${orgName} is set up!`,
+  subject: `Welcome to WorkDesk – ${orgName} is set up!`,
   html: wrap(`
-    ${heading('Welcome to HRMS-X! 🎉')}
+    ${heading('Welcome to WorkDesk! 🎉')}
     ${para(`Hi <strong>${adminName}</strong>,`)}
-    ${para(`Your organisation <strong>${orgName}</strong> has been successfully registered on HRMS-X.`)}
+    ${para(`Your organisation <strong>${orgName}</strong> has been successfully registered on WorkDesk.`)}
     ${para('You can now log in to your HR Admin dashboard to start adding employees, configuring departments, and managing your workforce.')}
     ${divider()}
     ${para(`<strong>Login Email:</strong> ${adminEmail}`)}
@@ -70,11 +73,11 @@ export const welcomeTenant = ({ orgName, adminName, adminEmail }) => ({
 
 // ─── 2. Employee Created ───────────────────────────────────────────────────
 export const employeeCreated = ({ employeeName, email, defaultPassword, orgName }) => ({
-  subject: `Your HRMS-X account has been created – ${orgName}`,
+  subject: `Your WorkDesk account has been created – ${orgName}`,
   html: wrap(`
     ${heading('Welcome aboard! 👋')}
     ${para(`Hi <strong>${employeeName}</strong>,`)}
-    ${para(`Your employee account at <strong>${orgName}</strong> has been created on HRMS-X.`)}
+    ${para(`Your employee account at <strong>${orgName}</strong> has been created on WorkDesk.`)}
     ${divider()}
     ${para(`<strong>Email:</strong> ${email}`)}
     ${para(`<strong>Temporary Password:</strong> <code style="background:#f3f4f6;padding:4px 8px;border-radius:4px;font-size:14px;">${defaultPassword}</code>`)}
@@ -116,7 +119,7 @@ export const leaveStatusUpdate = ({ employeeName, leaveType, startDate, endDate,
       ${para(`Hi <strong>${employeeName}</strong>,`)}
       ${para(`Your <strong>${leaveType}</strong> leave request from <strong>${startDate}</strong> to <strong>${endDate}</strong> has been updated.`)}
       <div style="text-align:center;margin:20px 0;">
-        ${badge(status, colorMap[status] || '#6366f1')}
+        ${badge(status, colorMap[status] || '#65a30d')}
       </div>
     `)
   };
@@ -131,7 +134,7 @@ export const disciplinaryQueryIssued = ({ employeeName, caseTitle, deadlineDate 
     ${para(`A disciplinary query has been issued regarding: <strong>${caseTitle}</strong>.`)}
     ${para(`You are required to respond by <strong>${deadlineDate}</strong>.`)}
     ${divider()}
-    ${para('Please log in to your HRMS-X portal to view the full details and submit your response.')}
+    ${para('Please log in to your WorkDesk portal to view the full details and submit your response.')}
   `)
 });
 
@@ -142,7 +145,7 @@ export const onboardingPlanCreated = ({ employeeName, taskCount }) => ({
     ${heading('Onboarding Plan Created 🚀')}
     ${para(`Hi <strong>${employeeName}</strong>,`)}
     ${para(`Your onboarding plan has been set up with <strong>${taskCount} task${taskCount !== 1 ? 's' : ''}</strong>.`)}
-    ${para('Log in to your HRMS-X portal to view your onboarding checklist and get started.')}
+    ${para('Log in to your WorkDesk portal to view your onboarding checklist and get started.')}
   `)
 });
 
@@ -160,11 +163,11 @@ export const probationOutcome = ({ employeeName, decision, reason, newEndDate })
       ${heading(`Probation ${titles[decision] || decision}`)}
       ${para(`Dear <strong>${employeeName}</strong>,`)}
       <div style="text-align:center;margin:20px 0;">
-        ${badge(decision, colors[decision] || '#6366f1')}
+        ${badge(decision, colors[decision] || '#65a30d')}
       </div>
       ${reason ? para(`<strong>Reason:</strong> ${reason}`) : ''}
       ${extra}
-      ${para('Please log in to your HRMS-X portal for more details.')}
+      ${para('Please log in to your WorkDesk portal for more details.')}
     `)
   };
 };
@@ -196,7 +199,7 @@ export const payslipAvailable = ({ employeeName, period, netPay }) => ({
     ${divider()}
     ${para(`<strong>Net Pay:</strong> ₦${Number(netPay).toLocaleString('en-NG', { minimumFractionDigits: 2 })}`)}
     ${divider()}
-    ${para('Log in to your HRMS-X portal to view the full breakdown.')}
+    ${para('Log in to your WorkDesk portal to view the full breakdown.')}
   `)
 });
 
@@ -240,7 +243,7 @@ export const requisitionStatusUpdate = ({ employeeName, itemName, status }) => {
       ${para(`Hi <strong>${employeeName}</strong>,`)}
       ${para(`Your requisition${itemName ? ' for <strong>' + itemName + '</strong>' : ''} has been updated.`)}
       <div style="text-align:center;margin:20px 0;">
-        ${badge(status, colorMap[status] || '#6366f1')}
+        ${badge(status, colorMap[status] || '#65a30d')}
       </div>
     `)
   };
@@ -254,11 +257,11 @@ export const ticketReply = ({ recipientName, ticketSubject, senderName, messageS
     ${para(`Hi <strong>${recipientName}</strong>,`)}
     ${para(`<strong>${senderName}</strong> replied to ticket: <strong>${ticketSubject}</strong>.`)}
     ${divider()}
-    <div style="background:#f9fafb;padding:16px;border-radius:8px;border-left:4px solid #6366f1;">
+    <div style="background:#fafafa;padding:16px;border-radius:8px;border-left:4px solid #84cc16;">
       <p style="margin:0;font-size:14px;color:#4b5563;font-style:italic;">"${messageSnippet}"</p>
     </div>
     ${divider()}
-    ${para('Log in to your HRMS-X portal to continue the conversation.')}
+    ${para('Log in to your WorkDesk portal to continue the conversation.')}
   `)
 });
 
@@ -280,11 +283,11 @@ export const trainingEnrolled = ({ employeeName, courseTitle, courseType, durati
 
 // ─── 15. Password Reset Requested ───────────────────────────────────────────
 export const passwordResetRequested = ({ name, resetUrl }) => ({
-  subject: `Reset your HRMS-X password`,
+  subject: `Reset your WorkDesk password`,
   html: wrap(`
     ${heading('Reset Your Password 🔒')}
     ${para(`Hi <strong>${name}</strong>,`)}
-    ${para('We received a request to reset your HRMS-X password. Click the button below to choose a new one. This link expires in 30 minutes.')}
+    ${para('We received a request to reset your WorkDesk password. Click the button below to choose a new one. This link expires in 30 minutes.')}
     <div style="text-align:center;">
       ${btn('Reset Password', resetUrl)}
     </div>
@@ -295,13 +298,13 @@ export const passwordResetRequested = ({ name, resetUrl }) => ({
 
 // ─── 15b. Login OTP (email-based 2FA, opt-in) ──────────────────────────────
 export const loginOtpCode = ({ name, code }) => ({
-  subject: `Your HRMS-X login code: ${code}`,
+  subject: `Your WorkDesk login code: ${code}`,
   html: wrap(`
     ${heading('Your Login Code 🔑')}
     ${para(`Hi <strong>${name}</strong>,`)}
     ${para('Enter this code to finish signing in. It expires in 10 minutes.')}
     <div style="text-align:center;padding:16px 0;">
-      <span style="display:inline-block;font-size:32px;font-weight:700;letter-spacing:8px;color:#111827;background:#f4f6f8;padding:12px 24px;border-radius:8px;">${code}</span>
+      <span style="display:inline-block;font-size:32px;font-weight:700;letter-spacing:8px;color:#111827;background:#f4f5f2;padding:12px 24px;border-radius:8px;">${code}</span>
     </div>
     ${divider()}
     ${para("If you didn't try to log in, you can ignore this email — your account is safe.")}
@@ -321,7 +324,7 @@ export const kpiSelfReviewSubmitted = ({ managerName, employeeName, kpiTitle, sc
       <tr><td style="padding:6px 0;font-weight:600;">Self-Rating</td><td>${score}/5</td></tr>
     </table>
     ${divider()}
-    ${para('Log in to your HRMS-X portal to submit the manager review.')}
+    ${para('Log in to your WorkDesk portal to submit the manager review.')}
   `)
 });
 
@@ -335,6 +338,6 @@ export const kpiSignedOff = ({ employeeName, kpiTitle, finalScore }) => ({
     <div style="text-align:center;margin:20px 0;">
       ${badge(`Final Score: ${finalScore}/5`, '#16a34a')}
     </div>
-    ${para('Log in to your HRMS-X portal to see the full review.')}
+    ${para('Log in to your WorkDesk portal to see the full review.')}
   `)
 });
