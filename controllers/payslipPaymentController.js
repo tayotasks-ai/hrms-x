@@ -104,7 +104,15 @@ export const payOnePayslip = async (payslip, secretKey, tenantId, actor, { isTes
     const result = await initiateTransfer(secretKey, {
       amountNaira: payslip.netPay,
       recipientCode: emp.bankDetails.paystackRecipientCode,
-      reason: `Salary payment — ${payslip.period}`,
+      // Plain ASCII only, with a trailing separator: Nigerian banks' NIP SMS
+      // gateways silently drop unsupported characters (the em dash "—" was
+      // vanishing entirely, leaving "payment  August 2026" with a stray
+      // double space) and several of them concatenate whatever we send
+      // directly against the sender's business name with no separator of
+      // their own — hence alerts reading like "...2026KumuTech". The
+      // trailing " | " guarantees a visible break no matter what gets
+      // appended after it.
+      reason: `Salary payment - ${payslip.period} | `,
       reference,
     });
 
