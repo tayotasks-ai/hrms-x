@@ -370,25 +370,35 @@ export const finalizePayslipPayment = async (req, res) => {
   }
 };
 
-// POST /api/payslips/:id/reset-payment – HR only.
+// POST /api/payslips/:id/reset-payment – HR only. Body: { force?: boolean }
 // For a payslip stuck on Pending_OTP with no practical way to enter the
 // OTP — the platform initiates every transfer under ONE shared Paystack
 // secret key, so Paystack's OTP goes to whoever is registered on the
 // PLATFORM's own account, not the tenant paying. There's no way for an
 // individual organisation to receive or enter it.
 //
-// This does NOT trust a timer or just assume the transfer is dead — it
-// asks Paystack directly (Verify Transfer) what the transfer's real
-// current status is, and only resets payment status / refunds the wallet
-// if Paystack confirms it's in a genuinely terminal, non-processing state
-// (abandoned/failed/reversed). If Paystack still reports it live (pending/
-// otp) we refuse, so there's no risk of resetting a transfer Paystack
-// might still complete and double-crediting the wallet. If Paystack
-// reports it actually succeeded, we sync payment.status to Paid instead of
-// resetting — the money already moved.
+// Default (force !== true): does NOT trust a timer or just assume the
+// transfer is dead — it asks Paystack directly (Verify Transfer) what the
+// transfer's real current status is, and only resets payment status /
+// refunds the wallet if Paystack confirms it's in a genuinely terminal,
+// non-processing state (abandoned/failed/reversed). If Paystack still
+// reports it live (pending/otp) we refuse, so there's no risk of resetting
+// a transfer Paystack might still complete and double-crediting the
+// wallet.
+//
+// force === true: HR has explicitly acknowledged the risk (see the
+// frontend confirm modal) and wants to reset anyway even though Paystack
+// still reports the transfer as live. We still try to check Paystack first
+// — if it turns out the transfer actually succeeded, we sync to Paid
+// instead of blindly resetting, since that's cheap insurance against the
+// worst outcome. But if Paystack still says it's live (or the check
+// itself fails), we proceed with the reset regardless. This can genuinely
+// result in the employee being paid AND the wallet being refunded as if
+// they weren't — that trade-off is the caller's explicit choice, not ours.
 export const resetStuckPayment = async (req, res) => {
   try {
     const tid = req.tenantId;
+    const force = req.body?.force === true;
     const payslip = await Payslip.findOne({ _id: req.params.id, tenantId: tid });
     if (!payslip) return res.status(404).json({ success: false, message: 'Payslip not found.' });
     if (payslip.payment?.status !== 'Pending_OTP')
@@ -401,14 +411,16 @@ export const resetStuckPayment = async (req, res) => {
     try { secretKey = getPlatformSecretKey(); }
     catch (err) { return res.status(503).json({ success: false, message: err.message }); }
 
-    let paystackStatus;
+    let paystackStatus = null;
     try {
       const result = await verifyTransfer(secretKey, reference);
       paystackStatus = result.status;
     } catch (err) {
-      return res.status(502).json({ success: false, message: `Could not check the transfer's status with Paystack: ${err.message}` });
+      if (!force) return res.status(502).json({ success: false, message: `Could not check the transfer's status with Paystack: ${err.message}` });
+      paystackStatus = 'unknown (Paystack check failed)';
     }
 
+    // Regardless of force, never overwrite an actually-successful transfer.
     if (paystackStatus === 'success') {
       payslip.payment.status = 'Paid';
       payslip.payment.paidAt = payslip.payment.paidAt || new Date();
@@ -418,7 +430,7 @@ export const resetStuckPayment = async (req, res) => {
     }
 
     const terminalNonLive = ['abandoned', 'failed', 'reversed'].includes(paystackStatus);
-    if (!terminalNonLive) {
+    if (!terminalNonLive && !force) {
       return res.status(400).json({
         success: false,
         message: `Paystack still shows this transfer as "${paystackStatus}" — it may still complete, so it can't be reset yet. Try again shortly.`,
@@ -426,7 +438,9 @@ export const resetStuckPayment = async (req, res) => {
     }
 
     payslip.payment.status = 'Failed';
-    payslip.payment.failureReason = `Reset by HR after Paystack confirmed status "${paystackStatus}"`;
+    payslip.payment.failureReason = force && !terminalNonLive
+      ? `Force-reset by HR while Paystack still reported "${paystackStatus}"`
+      : `Reset by HR after Paystack confirmed status "${paystackStatus}"`;
     await payslip.save();
 
     let refunded = false;
@@ -446,7 +460,7 @@ export const resetStuckPayment = async (req, res) => {
         reference,
         status: 'Success',
         relatedPayslip: payslip._id,
-        meta: { reason: 'Manual reset — stuck OTP payment', paystackStatus },
+        meta: { reason: force && !terminalNonLive ? 'Force reset — stuck OTP payment (Paystack still live)' : 'Manual reset — stuck OTP payment', paystackStatus },
       });
       refunded = true;
     }
@@ -454,15 +468,15 @@ export const resetStuckPayment = async (req, res) => {
     recordAudit({
       tenantId: tid,
       actor: { id: req.user._id, name: req.user.name, model: 'User' },
-      targetType: 'Payslip', targetId: payslip._id, targetName: `${payslip.period} payment reset`,
+      targetType: 'Payslip', targetId: payslip._id, targetName: `${payslip.period} payment ${force && !terminalNonLive ? 'force-reset' : 'reset'}`,
       changes: [{ field: 'Payment', from: 'Pending_OTP', to: 'Failed' }],
     });
 
-    res.json({
-      success: true,
-      message: `Payment reset — Paystack confirmed this transfer as "${paystackStatus}".${refunded ? ' Wallet refunded, ready to pay again.' : ''}`,
-      data: { status: 'Failed' },
-    });
+    const message = force && !terminalNonLive
+      ? `Payment force-reset while Paystack still showed "${paystackStatus}". Wallet refunded — if the original transfer completes later, the employee may be paid twice. Double-check reference ${reference} on Paystack before assuming it's clear.`
+      : `Payment reset — Paystack confirmed this transfer as "${paystackStatus}".${refunded ? ' Wallet refunded, ready to pay again.' : ''}`;
+
+    res.json({ success: true, message, data: { status: 'Failed', forced: force && !terminalNonLive } });
   } catch (err) {
     res.status(500).json({ success: false, message: err.message });
   }
