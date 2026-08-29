@@ -33,7 +33,7 @@ import { clockIn, clockOut, getMyAttendance, getTodayAttendance } from '../contr
 import { getAuditLog } from '../controllers/auditLogController.js';
 import { getWallet, setupWallet, setWalletDualApproval, setPayrollSchedule, getWalletTransactions } from '../controllers/walletController.js';
 import { getBanks, verifyBankAccount } from '../controllers/bankController.js';
-import { payPayslip, payBatch, finalizePayslipPayment } from '../controllers/payslipPaymentController.js';
+import { payPayslip, payBatch, finalizePayslipPayment, resetStuckPayment } from '../controllers/payslipPaymentController.js';
 import { getPayrollApprovals, approvePayrollApproval, rejectPayrollApproval } from '../controllers/payrollApprovalController.js';
 import { handlePaystackWebhook } from '../controllers/webhookController.js';
 import { getNotifications, markNotificationRead, markAllNotificationsRead } from '../controllers/notificationController.js';
@@ -159,6 +159,7 @@ router.get('/payslips/:id/pdf', getPayslipPdf);
 router.post('/payslips/pay-batch', hrOnly, payBatch);
 router.post('/payslips/:id/pay', hrOnly, payPayslip);
 router.post('/payslips/:id/pay/finalize', hrOnly, finalizePayslipPayment);
+router.post('/payslips/:id/reset-payment', hrOnly, resetStuckPayment);
 
 // Payroll Approvals (maker-checker, only relevant when dual approval is on)
 router.get('/payroll-approvals', hrOnly, getPayrollApprovals);

@@ -4,7 +4,7 @@ import Employee from '../models/Employee.js';
 import Tenant from '../models/Tenant.js';
 import PayrollApproval from '../models/PayrollApproval.js';
 import WalletTransaction from '../models/WalletTransaction.js';
-import { getPlatformSecretKey, computeTransferFee, initiateTransfer, finalizeTransfer, PaystackError } from '../utils/paystack.js';
+import { getPlatformSecretKey, computeTransferFee, initiateTransfer, finalizeTransfer, verifyTransfer, PaystackError } from '../utils/paystack.js';
 import { recordAudit } from '../utils/auditLog.js';
 import { sendEmail } from '../utils/email.js';
 import { payslipAvailable } from '../utils/emailTemplates.js';
@@ -367,5 +367,103 @@ export const finalizePayslipPayment = async (req, res) => {
     }
   } catch (err) {
     res.status(400).json({ success: false, message: err.message });
+  }
+};
+
+// POST /api/payslips/:id/reset-payment – HR only.
+// For a payslip stuck on Pending_OTP with no practical way to enter the
+// OTP — the platform initiates every transfer under ONE shared Paystack
+// secret key, so Paystack's OTP goes to whoever is registered on the
+// PLATFORM's own account, not the tenant paying. There's no way for an
+// individual organisation to receive or enter it.
+//
+// This does NOT trust a timer or just assume the transfer is dead — it
+// asks Paystack directly (Verify Transfer) what the transfer's real
+// current status is, and only resets payment status / refunds the wallet
+// if Paystack confirms it's in a genuinely terminal, non-processing state
+// (abandoned/failed/reversed). If Paystack still reports it live (pending/
+// otp) we refuse, so there's no risk of resetting a transfer Paystack
+// might still complete and double-crediting the wallet. If Paystack
+// reports it actually succeeded, we sync payment.status to Paid instead of
+// resetting — the money already moved.
+export const resetStuckPayment = async (req, res) => {
+  try {
+    const tid = req.tenantId;
+    const payslip = await Payslip.findOne({ _id: req.params.id, tenantId: tid });
+    if (!payslip) return res.status(404).json({ success: false, message: 'Payslip not found.' });
+    if (payslip.payment?.status !== 'Pending_OTP')
+      return res.status(400).json({ success: false, message: `Only a payment stuck "Awaiting OTP" can be reset (currently "${payslip.payment?.status || 'Unpaid'}").` });
+
+    const reference = payslip.payment.reference;
+    if (!reference) return res.status(400).json({ success: false, message: 'No transfer reference on this payslip — nothing to check.' });
+
+    let secretKey;
+    try { secretKey = getPlatformSecretKey(); }
+    catch (err) { return res.status(503).json({ success: false, message: err.message }); }
+
+    let paystackStatus;
+    try {
+      const result = await verifyTransfer(secretKey, reference);
+      paystackStatus = result.status;
+    } catch (err) {
+      return res.status(502).json({ success: false, message: `Could not check the transfer's status with Paystack: ${err.message}` });
+    }
+
+    if (paystackStatus === 'success') {
+      payslip.payment.status = 'Paid';
+      payslip.payment.paidAt = payslip.payment.paidAt || new Date();
+      await payslip.save();
+      await WalletTransaction.updateOne({ reference, type: 'Payroll_Debit' }, { status: 'Success' });
+      return res.json({ success: true, message: 'This transfer actually went through on Paystack — payslip marked Paid instead of reset.', data: { status: 'Paid' } });
+    }
+
+    const terminalNonLive = ['abandoned', 'failed', 'reversed'].includes(paystackStatus);
+    if (!terminalNonLive) {
+      return res.status(400).json({
+        success: false,
+        message: `Paystack still shows this transfer as "${paystackStatus}" — it may still complete, so it can't be reset yet. Try again shortly.`,
+      });
+    }
+
+    payslip.payment.status = 'Failed';
+    payslip.payment.failureReason = `Reset by HR after Paystack confirmed status "${paystackStatus}"`;
+    await payslip.save();
+
+    let refunded = false;
+    const debit = await WalletTransaction.findOne({ reference, type: 'Payroll_Debit' });
+    if (debit && !(await WalletTransaction.findOne({ reference, type: 'Refund' }))) {
+      const updated = await Tenant.findOneAndUpdate(
+        { _id: tid },
+        { $inc: { 'wallet.balance': debit.amount } },
+        { new: true }
+      ).select('wallet.balance');
+      await WalletTransaction.updateOne({ _id: debit._id }, { status: 'Failed' });
+      await WalletTransaction.create({
+        tenantId: tid,
+        type: 'Refund',
+        amount: debit.amount,
+        balanceAfter: updated.wallet.balance,
+        reference,
+        status: 'Success',
+        relatedPayslip: payslip._id,
+        meta: { reason: 'Manual reset — stuck OTP payment', paystackStatus },
+      });
+      refunded = true;
+    }
+
+    recordAudit({
+      tenantId: tid,
+      actor: { id: req.user._id, name: req.user.name, model: 'User' },
+      targetType: 'Payslip', targetId: payslip._id, targetName: `${payslip.period} payment reset`,
+      changes: [{ field: 'Payment', from: 'Pending_OTP', to: 'Failed' }],
+    });
+
+    res.json({
+      success: true,
+      message: `Payment reset — Paystack confirmed this transfer as "${paystackStatus}".${refunded ? ' Wallet refunded, ready to pay again.' : ''}`,
+      data: { status: 'Failed' },
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
   }
 };

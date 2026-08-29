@@ -204,6 +204,16 @@ export const finalizeTransfer = async (secretKey, { transferCode, otp }) => {
   return res.data;
 };
 
+// Asks Paystack directly what a transfer's CURRENT real status is, keyed by
+// the reference we generated. Used to safely resolve a payslip stuck on
+// Pending_OTP: rather than trust that a transfer has gone stale, we check
+// Paystack's own record before ever resetting payment status or refunding
+// the wallet — see controllers/payslipPaymentController.js resetStuckPayment.
+export const verifyTransfer = async (secretKey, reference) => {
+  const res = await request(secretKey, 'GET', `/transfer/verify/${encodeURIComponent(reference)}`);
+  return res.data; // { status, ... } — status is one of pending/success/reversed/failed/otp/abandoned/blocked/rejected/received
+};
+
 // The REAL, spendable Paystack balance right now (kobo -> naira) — separate
 // from Tenant.wallet.balance, which is just our own internal ledger. A
 // dedicated-virtual-account deposit credits the ledger the instant our
