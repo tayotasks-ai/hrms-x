@@ -44,13 +44,13 @@ export const approvePayrollApproval = async (req, res) => {
     try { secretKey = getPlatformSecretKey(); }
     catch (err) { return res.status(503).json({ success: false, message: err.message }); }
     const actor = { id: req.user._id, name: req.user.name, model: 'User' };
-    const tenant = await Tenant.findById(tid).select('isTestAccount');
+    const tenant = await Tenant.findById(tid).select('isTestAccount name');
 
     const results = [];
     for (const payslipId of approval.payslipIds) {
       const payslip = await Payslip.findOne({ _id: payslipId, tenantId: tid });
       if (!payslip) { results.push({ payslipId, ok: false, message: 'Payslip not found.' }); continue; }
-      const result = await payOnePayslip(payslip, secretKey, tid, actor, { isTestAccount: !!tenant?.isTestAccount });
+      const result = await payOnePayslip(payslip, secretKey, tid, actor, { isTestAccount: !!tenant?.isTestAccount, tenantName: tenant?.name || '' });
       results.push({ payslipId, ok: result.ok, status: result.status, message: result.message, insufficientBalance: result.insufficientBalance });
     }
 

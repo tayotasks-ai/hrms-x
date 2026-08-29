@@ -49,7 +49,7 @@ const stampDutyApplies = () => process.env.PAYSTACK_STAMP_DUTY_EXEMPT !== 'true'
 // duty, and our own markup — so only the raw net pay is debited. The
 // platform absorbs the real Paystack cost for these accounts; that's a
 // deliberate choice, not an oversight.
-export const payOnePayslip = async (payslip, secretKey, tenantId, actor, { isTestAccount = false } = {}) => {
+export const payOnePayslip = async (payslip, secretKey, tenantId, actor, { isTestAccount = false, tenantName = '' } = {}) => {
   if (['Processing', 'Pending_OTP', 'Paid'].includes(payslip.payment?.status)) {
     return { ok: false, payslipId: payslip._id, message: `Payment already ${payslip.payment.status}.` };
   }
@@ -112,7 +112,15 @@ export const payOnePayslip = async (payslip, secretKey, tenantId, actor, { isTes
       // their own — hence alerts reading like "...2026KumuTech". The
       // trailing " | " guarantees a visible break no matter what gets
       // appended after it.
-      reason: `Salary payment - ${payslip.period} | `,
+      //
+      // tenantName is included because every transfer physically leaves
+      // the PLATFORM's own bank account (see Tenant.wallet model docs) —
+      // the NIP "sender" the employee's bank shows is always the platform's
+      // registered business name, not the actual employer's, and that
+      // isn't something the Transfers API lets us override. Putting the
+      // real employer's name in the narration is the only way to make it
+      // visible on the alert at all.
+      reason: `Salary payment - ${payslip.period}${tenantName ? ` - ${tenantName}` : ''} | `,
       reference,
     });
 
@@ -238,7 +246,7 @@ export const payPayslip = async (req, res) => {
     if (!payslip) return res.status(404).json({ success: false, message: 'Payslip not found.' });
 
     const actor = { id: req.user._id, name: req.user.name, model: 'User' };
-    const tenant = await Tenant.findById(tid).select('wallet.requireDualApproval isTestAccount');
+    const tenant = await Tenant.findById(tid).select('wallet.requireDualApproval isTestAccount name');
 
     if (tenant?.wallet?.requireDualApproval) {
       const { approval, skipped } = await createApprovalRequest(tid, [req.params.id], actor);
@@ -250,7 +258,7 @@ export const payPayslip = async (req, res) => {
     try { secretKey = getPlatformSecretKey(); }
     catch (err) { return res.status(503).json({ success: false, message: err.message }); }
 
-    const result = await payOnePayslip(payslip, secretKey, tid, actor, { isTestAccount: !!tenant?.isTestAccount });
+    const result = await payOnePayslip(payslip, secretKey, tid, actor, { isTestAccount: !!tenant?.isTestAccount, tenantName: tenant?.name || '' });
 
     if (!result.ok) return res.status(400).json({ success: false, message: result.message, data: result });
     res.json({ success: true, message: result.requiresOtp ? 'Transfer requires an OTP to finalize.' : 'Payment initiated.', data: result });
@@ -272,7 +280,7 @@ export const payBatch = async (req, res) => {
     if (ids.length > 100) return res.status(400).json({ success: false, message: 'Batch payment is limited to 100 payslips at a time.' });
 
     const actor = { id: req.user._id, name: req.user.name, model: 'User' };
-    const tenant = await Tenant.findById(tid).select('wallet.requireDualApproval isTestAccount');
+    const tenant = await Tenant.findById(tid).select('wallet.requireDualApproval isTestAccount name');
 
     if (tenant?.wallet?.requireDualApproval) {
       const { approval, skipped } = await createApprovalRequest(tid, ids, actor);
@@ -289,11 +297,12 @@ export const payBatch = async (req, res) => {
     catch (err) { return res.status(503).json({ success: false, message: err.message }); }
 
     const isTestAccount = !!tenant?.isTestAccount;
+    const tenantName = tenant?.name || '';
     const results = [];
     for (const id of ids) {
       const payslip = await Payslip.findOne({ _id: id, tenantId: tid });
       if (!payslip) { results.push({ ok: false, payslipId: id, message: 'Payslip not found.' }); continue; }
-      results.push(await payOnePayslip(payslip, secretKey, tid, actor, { isTestAccount }));
+      results.push(await payOnePayslip(payslip, secretKey, tid, actor, { isTestAccount, tenantName }));
     }
 
     notifyInsufficientBalance(tid, results);
