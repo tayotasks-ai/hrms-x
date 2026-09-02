@@ -7,6 +7,7 @@ import { sendEmail } from '../utils/email.js';
 import { payslipAvailable } from '../utils/emailTemplates.js';
 import { notifyHrAdmins } from '../utils/notify.js';
 import User from '../models/User.js';
+import { isInvoecrReference, forwardToInvoecr } from '../utils/invoecrForward.js';
 
 // POST /api/webhooks/paystack – PUBLIC, no tenant header, no auth.
 //
@@ -43,6 +44,19 @@ export const handlePaystackWebhook = async (req, res) => {
 
     const event = req.body.event;
     const data = req.body.data || {};
+
+    // This Paystack account is shared with invoecr, a separate invoicing
+    // product — see utils/invoecrForward.js for the full reasoning. invoecr
+    // events are identified by their `ivcr_`-prefixed reference and never
+    // touch our local business logic; we ack Paystack immediately, then
+    // forward the untouched raw bytes + signature to invoecr's own webhook
+    // as best-effort background work (not awaited — a slow/unreachable
+    // invoecr must never delay or fail OUR ack to Paystack).
+    if (isInvoecrReference(data.reference)) {
+      res.sendStatus(200);
+      forwardToInvoecr(req.rawBody, signature, data.reference);
+      return;
+    }
 
     if (event === 'charge.success') {
       await handleWalletFunding(data);
