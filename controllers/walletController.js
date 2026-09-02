@@ -1,7 +1,29 @@
 import Tenant from '../models/Tenant.js';
+import Payslip from '../models/Payslip.js';
 import WalletTransaction from '../models/WalletTransaction.js';
 import { getPlatformSecretKey, createCustomer, createDedicatedAccount, updateCustomerPhone, checkAvailableBalance, getPendingSettlements, PaystackError } from '../utils/paystack.js';
 import { recordAudit } from '../utils/auditLog.js';
+
+const startOfDay = (d) => new Date(d.getFullYear(), d.getMonth(), d.getDate());
+
+// Next date the auto-payday job (jobs/payrollScheduler.js) will fire for this
+// tenant's schedule, rolling to next month if this month's date has passed.
+// Returns null if the schedule isn't active — there's nothing to warn about.
+const computeNextPayday = (schedule) => {
+  if (!schedule?.active) return null;
+  const today = startOfDay(new Date());
+  const lastDayOf = (year, month) => new Date(year, month + 1, 0).getDate();
+
+  const candidateFor = (year, month) => {
+    if (schedule.useLastDayOfMonth) return new Date(year, month, lastDayOf(year, month));
+    const day = Math.min(schedule.dayOfMonth || 25, lastDayOf(year, month));
+    return new Date(year, month, day);
+  };
+
+  let candidate = candidateFor(today.getFullYear(), today.getMonth());
+  if (candidate < today) candidate = candidateFor(today.getFullYear(), today.getMonth() + 1);
+  return candidate;
+};
 
 // GET /api/wallet — HR only. Balance, dedicated account (if set up), and
 // the payroll schedule/dual-approval settings, all in one call so the
@@ -45,12 +67,50 @@ export const getWallet = async (req, res) => {
       // non-fatal — the Wallet tab just won't show the live-availability hint
     }
 
+    // Proactive funding-gap check: closes the gap where a tenant only finds
+    // out timing is tight *after* they fund and see a settlement note, or
+    // after payroll actually runs short. nextPayday comes from the same
+    // schedule jobs/payrollScheduler.js checks; expectedPayrollTotal sums
+    // this period's still-unpaid payslips (the same query the scheduler
+    // itself runs), so this only fires once real payslips exist. Available
+    // funds are compared against confirmedAvailable when we have it (the
+    // stricter, Paystack-confirmed figure), falling back to the ledger
+    // balance if the live check above couldn't run.
+    let nextPayday = null;
+    let daysUntilPayday = null;
+    let expectedPayrollTotal = 0;
+    let fundingShortfall = 0;
+    try {
+      const payday = computeNextPayday(tenant?.payrollSchedule);
+      if (payday) {
+        nextPayday = payday;
+        daysUntilPayday = Math.round((payday - startOfDay(new Date())) / 86400000);
+
+        const period = payday.toLocaleString('default', { month: 'long', year: 'numeric' });
+        const outstanding = await Payslip.find({
+          tenantId: req.tenantId,
+          period,
+          'payment.status': { $in: ['Unpaid', 'Failed'] },
+        }).select('netPay');
+        expectedPayrollTotal = outstanding.reduce((sum, p) => sum + (p.netPay || 0), 0);
+
+        const availableForCompare = confirmedAvailable === null ? ledgerBalance : confirmedAvailable;
+        fundingShortfall = Math.max(0, expectedPayrollTotal - availableForCompare);
+      }
+    } catch {
+      // non-fatal — same fail-soft treatment as the settlement check above
+    }
+
     res.json({
       success: true,
       data: {
         balance: ledgerBalance,
         confirmedAvailable,
         nextSettlementDate,
+        nextPayday,
+        daysUntilPayday,
+        expectedPayrollTotal,
+        fundingShortfall,
         dedicatedAccount: tenant?.wallet?.dedicatedAccount?.active ? tenant.wallet.dedicatedAccount : null,
         requireDualApproval: !!tenant?.wallet?.requireDualApproval,
         payrollSchedule: tenant?.payrollSchedule || { dayOfMonth: 25, useLastDayOfMonth: false, active: false },
