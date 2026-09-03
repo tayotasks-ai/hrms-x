@@ -53,19 +53,29 @@ export const calculateAnnualPAYE = (annualTaxableIncome) => {
 // Computes a full statutory breakdown for one monthly payslip.
 // otherDeductions covers anything outside PAYE/pension/NHF (e.g. loan repayment,
 // union dues) that HR enters manually.
-export const calculateNigerianPayroll = ({ basicSalary = 0, allowances = 0, otherDeductions = 0 }) => {
+//
+// payeEnabled/pensionEnabled/nhfEnabled — per-tenant opt-outs (see
+// Tenant.statutoryDeductions) — all default to true, the previous always-on
+// behavior. Turning pension/NHF off also removes their pre-tax relief from
+// the PAYE calculation, since that's the statutorily correct interaction:
+// if you're not withholding pension, there's no pension relief to shelter
+// income from tax.
+export const calculateNigerianPayroll = ({
+  basicSalary = 0, allowances = 0, otherDeductions = 0,
+  payeEnabled = true, pensionEnabled = true, nhfEnabled = true,
+}) => {
   const basic = Number(basicSalary) || 0;
   const allow = Number(allowances) || 0;
   const other = Number(otherDeductions) || 0;
 
   const grossPay = basic + allow;
   const pensionablePay = grossPay; // approximation — see header comment
-  const pension = round2(pensionablePay * 0.08);
-  const nhf = round2(basic * 0.025);
+  const pension = pensionEnabled ? round2(pensionablePay * 0.08) : 0;
+  const nhf = nhfEnabled ? round2(basic * 0.025) : 0;
 
   const monthlyReliefs = pension + nhf;
   const annualTaxableIncome = Math.max(0, (grossPay - monthlyReliefs) * 12);
-  const paye = round2(calculateAnnualPAYE(annualTaxableIncome) / 12);
+  const paye = payeEnabled ? round2(calculateAnnualPAYE(annualTaxableIncome) / 12) : 0;
 
   const total = round2(paye + pension + nhf + other);
   const netPay = round2(grossPay - total);

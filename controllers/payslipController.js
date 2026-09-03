@@ -7,6 +7,7 @@ import { calculateNigerianPayroll } from '../utils/payrollCalc.js';
 import { streamPayslipPdf } from '../utils/payslipPdf.js';
 import { notify } from '../utils/notify.js';
 import { decryptRegulatoryField } from '../utils/piiDisplay.js';
+import { recordAudit } from '../utils/auditLog.js';
 
 // GET /api/payslips  – employees only see their own
 export const getPayslips = async (req, res) => {
@@ -39,8 +40,12 @@ export const createPayslip = async (req, res) => {
     const emp = await Employee.findOne({ _id: employeeId, tenantId: tid });
     if (!emp) return res.status(404).json({ success: false, message: 'Employee not found.' });
 
+    const tenant = await Tenant.findById(tid).select('statutoryDeductions').lean();
     const { grossPay, deductions, netPay } = calculateNigerianPayroll({
       basicSalary, allowances, otherDeductions,
+      payeEnabled: tenant?.statutoryDeductions?.paye !== false,
+      pensionEnabled: tenant?.statutoryDeductions?.pension !== false,
+      nhfEnabled: tenant?.statutoryDeductions?.nhf !== false,
     });
 
     const payslip = await Payslip.create({
@@ -90,11 +95,17 @@ export const bulkGeneratePayslips = async (req, res) => {
     const period = (req.body?.period || '').trim();
     if (!period) return res.status(400).json({ success: false, message: 'period is required.' });
 
-    const [employees, existing] = await Promise.all([
+    const [employees, existing, tenant] = await Promise.all([
       Employee.find({ tenantId: tid, status: { $ne: 'Offboarded' } }).select('name salary'),
       Payslip.find({ tenantId: tid, period }).select('employeeId'),
+      Tenant.findById(tid).select('statutoryDeductions').lean(),
     ]);
     const existingIds = new Set(existing.map(p => p.employeeId.toString()));
+    const deductionOptions = {
+      payeEnabled: tenant?.statutoryDeductions?.paye !== false,
+      pensionEnabled: tenant?.statutoryDeductions?.pension !== false,
+      nhfEnabled: tenant?.statutoryDeductions?.nhf !== false,
+    };
 
     const created = [];
     const skipped = [];
@@ -107,7 +118,7 @@ export const bulkGeneratePayslips = async (req, res) => {
 
       const basicSalary = emp.salary || 0;
       const { grossPay, deductions, netPay } = calculateNigerianPayroll({
-        basicSalary, allowances: 0, otherDeductions: 0,
+        basicSalary, allowances: 0, otherDeductions: 0, ...deductionOptions,
       });
 
       const payslip = await Payslip.create({
@@ -124,6 +135,62 @@ export const bulkGeneratePayslips = async (req, res) => {
       success: true,
       message: `Generated ${created.length} draft payslip(s) for ${period}.${skipped.length ? ` Skipped ${skipped.length} employee(s) who already have one.` : ''}`,
       data: { created, skipped },
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+};
+
+// GET /api/payslips/deduction-settings – HR only. Which statutory
+// deductions this tenant currently has switched on.
+export const getDeductionSettings = async (req, res) => {
+  try {
+    const tenant = await Tenant.findById(req.tenantId).select('statutoryDeductions').lean();
+    res.json({
+      success: true,
+      data: {
+        paye: tenant?.statutoryDeductions?.paye !== false,
+        pension: tenant?.statutoryDeductions?.pension !== false,
+        nhf: tenant?.statutoryDeductions?.nhf !== false,
+      },
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+};
+
+// PUT /api/payslips/deduction-settings – HR only. Body: any subset of
+// { paye, pension, nhf } (booleans). Only affects payslips generated AFTER
+// this change — see calculateNigerianPayroll / Tenant.statutoryDeductions.
+export const updateDeductionSettings = async (req, res) => {
+  try {
+    const tid = req.tenantId;
+    const update = {};
+    for (const key of ['paye', 'pension', 'nhf']) {
+      if (typeof req.body?.[key] === 'boolean') update[`statutoryDeductions.${key}`] = req.body[key];
+    }
+    if (Object.keys(update).length === 0)
+      return res.status(400).json({ success: false, message: 'Provide at least one of paye, pension, nhf as a boolean.' });
+
+    const tenant = await Tenant.findByIdAndUpdate(tid, update, { new: true }).select('statutoryDeductions');
+
+    recordAudit({
+      tenantId: tid,
+      actor: { id: req.user._id, name: req.user.name, model: 'User' },
+      targetType: 'PayrollSettings',
+      targetId: tid,
+      targetName: 'Statutory deductions',
+      changes: Object.entries(update).map(([field, to]) => ({ field, to: String(to) })),
+    });
+
+    res.json({
+      success: true,
+      message: 'Deduction settings updated. This only affects payslips generated from now on.',
+      data: {
+        paye: tenant.statutoryDeductions.paye !== false,
+        pension: tenant.statutoryDeductions.pension !== false,
+        nhf: tenant.statutoryDeductions.nhf !== false,
+      },
     });
   } catch (err) {
     res.status(500).json({ success: false, message: err.message });

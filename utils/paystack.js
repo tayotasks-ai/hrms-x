@@ -120,21 +120,16 @@ export const listDvaProviders = async (secretKey) => {
   return (res.data || []).map(p => ({ slug: p.provider_slug, bankId: p.bank_id, bankName: p.bank_name }));
 };
 
-// Paystack's own NGN transfer fee tiers (support.paystack.com/en/articles/2132866,
-// checked August 2026): ₦10 at/under ₦5,000, ₦25 up to ₦50,000, ₦50 above
-// that. Separately, a ₦50 flat stamp duty applies to transfers of ₦10,000+
-// UNLESS the merchant is registered with Paystack as a "Registered Payroll"
-// merchant (which this platform should apply for, since payroll disbursement
-// is its primary use of Transfers) — stampDutyApplies defaults to true
-// (the conservative assumption) until that registration is confirmed; flip
-// PAYSTACK_STAMP_DUTY_EXEMPT=true once it's approved.
-export const computeTransferFee = (amountNaira, { stampDutyApplies = true } = {}) => {
-  const amount = Number(amountNaira) || 0;
-  const paystackFee = amount <= 5000 ? 10 : amount <= 50000 ? 25 : 50;
-  const stampDuty = stampDutyApplies && amount >= 10000 ? 50 : 0;
-  const markup = 500; // our flat charge per transfer, per the founders' pricing decision
-  return { paystackFee, stampDuty, markup, total: paystackFee + stampDuty + markup };
-};
+// What we charge a tenant's wallet per payroll transfer, on top of net pay.
+// Flat and amount-independent, per the founders' pricing decision — a
+// simple, predictable number regardless of what Paystack's own tiered fee
+// (₦10–₦50) plus stamp duty (₦50 on transfers ₦10,000+, unless the platform
+// has "Registered Payroll" stamp-duty exemption) actually costs us; the
+// platform absorbs the difference either way. amountNaira is accepted but
+// unused — kept so call sites don't need to change if this ever becomes
+// tiered again.
+export const TRANSFER_FEE = 250;
+export const computeTransferFee = (_amountNaira) => ({ fee: TRANSFER_FEE, total: TRANSFER_FEE });
 
 // Nigerian banks, for the account-selection dropdown. { name, code, slug }[]
 export const listBanks = async (secretKey) => {

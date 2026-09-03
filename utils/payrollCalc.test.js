@@ -63,4 +63,44 @@ describe('calculateNigerianPayroll', () => {
     const result = calculateNigerianPayroll({});
     expect(result.grossPay).toBe(0);
   });
+
+  // Per-tenant opt-outs (Tenant.statutoryDeductions) — all default to true
+  // (unchanged behavior) when omitted, matching every test above.
+  describe('per-tenant deduction toggles', () => {
+    it('zeroes PAYE when payeEnabled is false, without touching pension/NHF', () => {
+      const on = calculateNigerianPayroll({ basicSalary: 500_000, allowances: 100_000 });
+      const off = calculateNigerianPayroll({ basicSalary: 500_000, allowances: 100_000, payeEnabled: false });
+      expect(off.deductions.paye).toBe(0);
+      expect(off.deductions.pension).toBeCloseTo(on.deductions.pension, 5);
+      expect(off.deductions.nhf).toBeCloseTo(on.deductions.nhf, 5);
+      expect(off.netPay).toBeCloseTo(on.netPay + on.deductions.paye, 2);
+    });
+
+    it('zeroes pension when pensionEnabled is false, and removes it as a PAYE relief', () => {
+      const on = calculateNigerianPayroll({ basicSalary: 2_000_000, allowances: 0 });
+      const off = calculateNigerianPayroll({ basicSalary: 2_000_000, allowances: 0, pensionEnabled: false });
+      expect(off.deductions.pension).toBe(0);
+      // Losing the pension relief raises taxable income, so PAYE should rise (or stay equal), never fall.
+      expect(off.deductions.paye).toBeGreaterThanOrEqual(on.deductions.paye);
+    });
+
+    it('zeroes NHF when nhfEnabled is false, and removes it as a PAYE relief', () => {
+      const on = calculateNigerianPayroll({ basicSalary: 2_000_000, allowances: 0 });
+      const off = calculateNigerianPayroll({ basicSalary: 2_000_000, allowances: 0, nhfEnabled: false });
+      expect(off.deductions.nhf).toBe(0);
+      expect(off.deductions.paye).toBeGreaterThanOrEqual(on.deductions.paye);
+    });
+
+    it('produces net pay equal to gross pay minus otherDeductions when all three are switched off', () => {
+      const result = calculateNigerianPayroll({
+        basicSalary: 500_000, allowances: 50_000, otherDeductions: 5_000,
+        payeEnabled: false, pensionEnabled: false, nhfEnabled: false,
+      });
+      expect(result.deductions.paye).toBe(0);
+      expect(result.deductions.pension).toBe(0);
+      expect(result.deductions.nhf).toBe(0);
+      expect(result.deductions.total).toBe(5_000);
+      expect(result.netPay).toBe(545_000); // 550,000 gross - 5,000 other
+    });
+  });
 });

@@ -26,10 +26,6 @@ const mapTransferStatus = (paystackStatus) => {
   return 'Processing'; // 'pending' or anything else in flight
 };
 
-// True unless the platform has confirmed Paystack "Registered Payroll"
-// stamp-duty exemption — see utils/paystack.js computeTransferFee.
-const stampDutyApplies = () => process.env.PAYSTACK_STAMP_DUTY_EXEMPT !== 'true';
-
 // Runs the actual Paystack call for one payslip. Shared by the single-pay,
 // batch-pay, and payroll-approval / scheduled-payday paths. Mutates and
 // saves the payslip; returns a plain result object rather than throwing, so
@@ -45,10 +41,10 @@ const stampDutyApplies = () => process.env.PAYSTACK_STAMP_DUTY_EXEMPT !== 'true'
 // but fails later, the webhook (webhookController.js) does the refund.
 //
 // isTestAccount (Tenant.isTestAccount, set from the platform dashboard for
-// orgs helping us test the product) waives every fee — Paystack fee, stamp
-// duty, and our own markup — so only the raw net pay is debited. The
-// platform absorbs the real Paystack cost for these accounts; that's a
-// deliberate choice, not an oversight.
+// orgs helping us test the product) waives the flat transfer fee entirely —
+// so only the raw net pay is debited. The platform absorbs the real
+// Paystack cost for these accounts; that's a deliberate choice, not an
+// oversight.
 // isDemoAccount (Tenant.isDemoAccount) — a sandbox org handed out for demos.
 // Skips the real Paystack /transfer call entirely and simulates an instant
 // success, so the demo never depends on (or risks) the platform's real
@@ -70,9 +66,7 @@ export const payOnePayslip = async (payslip, secretKey, tenantId, actor, { isTes
     return { ok: false, payslipId: payslip._id, message: 'Net pay must be greater than zero.' };
   }
 
-  const fee = isTestAccount
-    ? { paystackFee: 0, stampDuty: 0, markup: 0, total: 0 }
-    : computeTransferFee(payslip.netPay, { stampDutyApplies: stampDutyApplies() });
+  const fee = isTestAccount ? { fee: 0, total: 0 } : computeTransferFee(payslip.netPay);
   const totalDebit = payslip.netPay + fee.total;
   const reference = makeReference(tenantId, payslip._id);
 

@@ -28,8 +28,9 @@ const walletTransactionSchema = new mongoose.Schema({
 
   relatedPayslip: { type: mongoose.Schema.Types.ObjectId, ref: 'Payslip' },
 
-  // Fee breakdown for Payroll_Debit rows: { netPay, paystackFee, stampDuty, markup }.
-  // Left empty for Funding/Refund rows.
+  // Fee breakdown for Payroll_Debit rows: { netPay, fee, total } — see
+  // utils/paystack.js computeTransferFee (flat ₦250 per transfer, waived
+  // for isTestAccount tenants). Left empty for Funding/Refund rows.
   meta: { type: mongoose.Schema.Types.Mixed },
 }, { timestamps: true });
 

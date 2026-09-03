@@ -169,7 +169,7 @@ const run = async () => {
         reference,
         status: 'Success',
         relatedPayslip: payslip._id,
-        meta: { netPay: calc.netPay, paystackFee: 0, stampDuty: 0, markup: 0, total: calc.netPay, demo: true },
+        meta: { netPay: calc.netPay, fee: 0, total: calc.netPay, demo: true }, // isTestAccount:true waives the flat transfer fee
       });
     }
 

@@ -86,6 +86,23 @@ const tenantSchema = new mongoose.Schema({
     active: { type: Boolean, default: false },
     lastRunAt: { type: Date },
   },
+  // Per-tenant on/off switches for the statutory deductions
+  // calculateNigerianPayroll (utils/payrollCalc.js) applies when a payslip
+  // is generated (controllers/payslipController.js createPayslip /
+  // bulkGeneratePayslips). All default to on — this is an opt-OUT, for
+  // orgs with a reason not to withhold one of these themselves (e.g. an
+  // employer that isn't statutorily required to, or one that handles a
+  // particular remittance outside WorkDesk). Turning one off only affects
+  // payslips generated AFTERWARD; it does not retroactively change already-
+  // generated payslips. Turning pension/NHF off also removes their pre-tax
+  // relief from the PAYE calculation for payslips generated while off,
+  // since that's the statutorily correct interaction, not just a display
+  // toggle.
+  statutoryDeductions: {
+    paye: { type: Boolean, default: true },
+    pension: { type: Boolean, default: true },
+    nhf: { type: Boolean, default: true },
+  },
   // Company-wide annual leave entitlement, in working days, per leave type.
   // Applies to every employee equally (no per-employee/role overrides).
   // These defaults are applied automatically by Mongoose the moment a
