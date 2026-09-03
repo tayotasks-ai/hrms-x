@@ -1,4 +1,6 @@
+import crypto from 'crypto';
 import Employee from '../models/Employee.js';
+import Tenant from '../models/Tenant.js';
 import { listBanks, resolveAccountNumber, createTransferRecipient, getPlatformSecretKey, PaystackError } from '../utils/paystack.js';
 import { recordAudit } from '../utils/auditLog.js';
 import { encryptPii } from '../utils/crypto.js';
@@ -38,14 +40,26 @@ export const verifyBankAccount = async (req, res) => {
     if (!accountNumber || !bankCode)
       return res.status(400).json({ success: false, message: 'accountNumber and bankCode are required.' });
 
-    const secretKey = getPlatformSecretKey();
-
-    const resolved = await resolveAccountNumber(secretKey, accountNumber, bankCode);
-    const recipient = await createTransferRecipient(secretKey, {
-      name: resolved.accountName,
-      accountNumber: resolved.accountNumber,
-      bankCode,
-    });
+    // Demo tenants never touch the real Paystack account — a real account
+    // number typed into a sandbox org would either fail to resolve (not a
+    // real transfer target) or, worse, resolve to someone's actual bank
+    // details. Fabricate a plausible-looking resolution instead: real
+    // Paystack account-name resolution returns the account HOLDER's name, so
+    // using this employee's own name is the closest honest stand-in.
+    const tenant = await Tenant.findById(tid).select('isDemoAccount');
+    let resolved, recipient;
+    if (tenant?.isDemoAccount) {
+      resolved = { accountName: emp.name.toUpperCase(), accountNumber: String(accountNumber).trim() };
+      recipient = { recipientCode: `RCP_demo_${crypto.randomBytes(6).toString('hex')}` };
+    } else {
+      const secretKey = getPlatformSecretKey();
+      resolved = await resolveAccountNumber(secretKey, accountNumber, bankCode);
+      recipient = await createTransferRecipient(secretKey, {
+        name: resolved.accountName,
+        accountNumber: resolved.accountNumber,
+        bankCode,
+      });
+    }
 
     emp.bankDetails = {
       bankName: bankName || emp.bankDetails?.bankName,

@@ -49,7 +49,14 @@ const stampDutyApplies = () => process.env.PAYSTACK_STAMP_DUTY_EXEMPT !== 'true'
 // duty, and our own markup — so only the raw net pay is debited. The
 // platform absorbs the real Paystack cost for these accounts; that's a
 // deliberate choice, not an oversight.
-export const payOnePayslip = async (payslip, secretKey, tenantId, actor, { isTestAccount = false, tenantName = '' } = {}) => {
+// isDemoAccount (Tenant.isDemoAccount) — a sandbox org handed out for demos.
+// Skips the real Paystack /transfer call entirely and simulates an instant
+// success, so the demo never depends on (or risks) the platform's real
+// Paystack account. Everything else — the atomic wallet debit, the
+// WalletTransaction ledger row, the audit log entry — runs exactly as it
+// does for a real payment, since that bookkeeping is what a demo is
+// actually meant to show off.
+export const payOnePayslip = async (payslip, secretKey, tenantId, actor, { isTestAccount = false, tenantName = '', isDemoAccount = false } = {}) => {
   if (['Processing', 'Pending_OTP', 'Paid'].includes(payslip.payment?.status)) {
     return { ok: false, payslipId: payslip._id, message: `Payment already ${payslip.payment.status}.` };
   }
@@ -101,7 +108,9 @@ export const payOnePayslip = async (payslip, secretKey, tenantId, actor, { isTes
   });
 
   try {
-    const result = await initiateTransfer(secretKey, {
+    const result = isDemoAccount
+      ? { status: 'success', transfer_code: `DEMO_${reference}` }
+      : await initiateTransfer(secretKey, {
       amountNaira: payslip.netPay,
       recipientCode: emp.bankDetails.paystackRecipientCode,
       // Plain ASCII only, with a trailing separator: Nigerian banks' NIP SMS
@@ -246,7 +255,7 @@ export const payPayslip = async (req, res) => {
     if (!payslip) return res.status(404).json({ success: false, message: 'Payslip not found.' });
 
     const actor = { id: req.user._id, name: req.user.name, model: 'User' };
-    const tenant = await Tenant.findById(tid).select('wallet.requireDualApproval isTestAccount name');
+    const tenant = await Tenant.findById(tid).select('wallet.requireDualApproval isTestAccount isDemoAccount name');
 
     if (tenant?.wallet?.requireDualApproval) {
       const { approval, skipped } = await createApprovalRequest(tid, [req.params.id], actor);
@@ -256,9 +265,12 @@ export const payPayslip = async (req, res) => {
 
     let secretKey;
     try { secretKey = getPlatformSecretKey(); }
-    catch (err) { return res.status(503).json({ success: false, message: err.message }); }
+    catch (err) {
+      if (!tenant?.isDemoAccount) return res.status(503).json({ success: false, message: err.message });
+      secretKey = 'demo'; // never actually used — payOnePayslip skips the Paystack call for demo accounts
+    }
 
-    const result = await payOnePayslip(payslip, secretKey, tid, actor, { isTestAccount: !!tenant?.isTestAccount, tenantName: tenant?.name || '' });
+    const result = await payOnePayslip(payslip, secretKey, tid, actor, { isTestAccount: !!tenant?.isTestAccount, tenantName: tenant?.name || '', isDemoAccount: !!tenant?.isDemoAccount });
 
     if (!result.ok) return res.status(400).json({ success: false, message: result.message, data: result });
     res.json({ success: true, message: result.requiresOtp ? 'Transfer requires an OTP to finalize.' : 'Payment initiated.', data: result });
@@ -280,7 +292,7 @@ export const payBatch = async (req, res) => {
     if (ids.length > 100) return res.status(400).json({ success: false, message: 'Batch payment is limited to 100 payslips at a time.' });
 
     const actor = { id: req.user._id, name: req.user.name, model: 'User' };
-    const tenant = await Tenant.findById(tid).select('wallet.requireDualApproval isTestAccount name');
+    const tenant = await Tenant.findById(tid).select('wallet.requireDualApproval isTestAccount isDemoAccount name');
 
     if (tenant?.wallet?.requireDualApproval) {
       const { approval, skipped } = await createApprovalRequest(tid, ids, actor);
@@ -294,15 +306,19 @@ export const payBatch = async (req, res) => {
 
     let secretKey;
     try { secretKey = getPlatformSecretKey(); }
-    catch (err) { return res.status(503).json({ success: false, message: err.message }); }
+    catch (err) {
+      if (!tenant?.isDemoAccount) return res.status(503).json({ success: false, message: err.message });
+      secretKey = 'demo';
+    }
 
     const isTestAccount = !!tenant?.isTestAccount;
+    const isDemoAccount = !!tenant?.isDemoAccount;
     const tenantName = tenant?.name || '';
     const results = [];
     for (const id of ids) {
       const payslip = await Payslip.findOne({ _id: id, tenantId: tid });
       if (!payslip) { results.push({ ok: false, payslipId: id, message: 'Payslip not found.' }); continue; }
-      results.push(await payOnePayslip(payslip, secretKey, tid, actor, { isTestAccount, tenantName }));
+      results.push(await payOnePayslip(payslip, secretKey, tid, actor, { isTestAccount, tenantName, isDemoAccount }));
     }
 
     notifyInsufficientBalance(tid, results);

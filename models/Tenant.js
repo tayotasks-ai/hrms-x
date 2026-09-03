@@ -35,6 +35,16 @@ const tenantSchema = new mongoose.Schema({
   // only from the root/platform dashboard (platformController.js) — no
   // tenant-facing UI exposes this, by design.
   isTestAccount: { type: Boolean, default: false },
+  // A sandbox org meant to be handed out freely (sales demos, "try before you
+  // sign up" links) so it needs to survive anyone clicking every button
+  // without ever touching the real Paystack platform account. Every code
+  // path that would normally call Paystack for THIS tenant — payroll
+  // transfers, wallet balance/settlement checks, bank account verification —
+  // is short-circuited to a synthetic success instead. See
+  // scripts/seedDemoOrg.js (creates/refreshes the org) and the isDemoAccount
+  // checks in payslipPaymentController.js, walletController.js, and
+  // bankController.js. Platform-admin-only, same as isTestAccount.
+  isDemoAccount: { type: Boolean, default: false },
   // Payroll wallet — replaces the old per-tenant "bring your own Paystack
   // key" model. Every tenant funds THIS wallet (by transferring into their
   // own dedicated virtual account) and every payroll transfer is disbursed

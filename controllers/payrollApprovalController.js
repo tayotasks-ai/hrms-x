@@ -40,17 +40,21 @@ export const approvePayrollApproval = async (req, res) => {
       return res.status(403).json({ success: false, message: 'You cannot approve a payroll run you initiated yourself. Ask another HR admin to review it.' });
     }
 
+    const actor = { id: req.user._id, name: req.user.name, model: 'User' };
+    const tenant = await Tenant.findById(tid).select('isTestAccount isDemoAccount name');
+
     let secretKey;
     try { secretKey = getPlatformSecretKey(); }
-    catch (err) { return res.status(503).json({ success: false, message: err.message }); }
-    const actor = { id: req.user._id, name: req.user.name, model: 'User' };
-    const tenant = await Tenant.findById(tid).select('isTestAccount name');
+    catch (err) {
+      if (!tenant?.isDemoAccount) return res.status(503).json({ success: false, message: err.message });
+      secretKey = 'demo';
+    }
 
     const results = [];
     for (const payslipId of approval.payslipIds) {
       const payslip = await Payslip.findOne({ _id: payslipId, tenantId: tid });
       if (!payslip) { results.push({ payslipId, ok: false, message: 'Payslip not found.' }); continue; }
-      const result = await payOnePayslip(payslip, secretKey, tid, actor, { isTestAccount: !!tenant?.isTestAccount, tenantName: tenant?.name || '' });
+      const result = await payOnePayslip(payslip, secretKey, tid, actor, { isTestAccount: !!tenant?.isTestAccount, tenantName: tenant?.name || '', isDemoAccount: !!tenant?.isDemoAccount });
       results.push({ payslipId, ok: result.ok, status: result.status, message: result.message, insufficientBalance: result.insufficientBalance });
     }
 

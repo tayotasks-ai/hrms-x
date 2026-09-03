@@ -30,7 +30,7 @@ const computeNextPayday = (schedule) => {
 // Wallet tab can render in a single request.
 export const getWallet = async (req, res) => {
   try {
-    const tenant = await Tenant.findById(req.tenantId).select('wallet payrollSchedule name isTestAccount');
+    const tenant = await Tenant.findById(req.tenantId).select('wallet payrollSchedule name isTestAccount isDemoAccount');
     const ledgerBalance = tenant?.wallet?.balance || 0;
 
     // Best-effort live check against Paystack's REAL available balance —
@@ -53,18 +53,27 @@ export const getWallet = async (req, res) => {
     // the Wallet tab over a nice-to-have status readout.
     let confirmedAvailable = null;
     let nextSettlementDate = null;
-    try {
-      const secretKey = getPlatformSecretKey();
-      const [platformAvailable, pending] = await Promise.all([
-        checkAvailableBalance(secretKey),
-        getPendingSettlements(secretKey),
-      ]);
-      confirmedAvailable = Math.max(0, Math.min(ledgerBalance, platformAvailable));
-      if (pending.length > 0) {
-        nextSettlementDate = pending.map(s => s.settlementDate).sort()[0];
+    if (tenant?.isDemoAccount) {
+      // Demo tenants never touch the real Paystack account — checking the
+      // PLATFORM's actual balance here would be meaningless for them anyway
+      // (it has nothing to do with this sandbox org's ledger) and would make
+      // the demo depend on live Paystack connectivity for no reason. Always
+      // reports fully available, deterministically.
+      confirmedAvailable = ledgerBalance;
+    } else {
+      try {
+        const secretKey = getPlatformSecretKey();
+        const [platformAvailable, pending] = await Promise.all([
+          checkAvailableBalance(secretKey),
+          getPendingSettlements(secretKey),
+        ]);
+        confirmedAvailable = Math.max(0, Math.min(ledgerBalance, platformAvailable));
+        if (pending.length > 0) {
+          nextSettlementDate = pending.map(s => s.settlementDate).sort()[0];
+        }
+      } catch {
+        // non-fatal — the Wallet tab just won't show the live-availability hint
       }
-    } catch {
-      // non-fatal — the Wallet tab just won't show the live-availability hint
     }
 
     // Proactive funding-gap check: closes the gap where a tenant only finds
